@@ -1,30 +1,41 @@
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import HlsPlayer from "./HlsPlayer";
 
 const PlayerPage = () => {
-  const [searchParams] = useSearchParams();
+  const { id } = useParams(); // Matches :id in App.jsx
   const navigate = useNavigate();
+  const [videoData, setVideoData] = useState(null);
+  const BASE_URL = "http://localhost:3000";
 
-  // 1. Get the path from the URL (?url=...)
-  const videoPath = searchParams.get("url");
+  useEffect(() => {
+    // Fetch specifically by the MongoDB _id
+    fetch(`${BASE_URL}/videos/${id}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) setVideoData(json.data);
+      })
+      .catch((err) => console.error("Error fetching video metadata:", err));
+  }, [id]);
 
-  // 2. Construct the full path to your backend
-  const fullStreamUrl = `http://localhost:3000/${videoPath}`;
+  if (!videoData) return <div className="bg-black min-h-screen text-white p-10">Initializing Stream...</div>;
 
   return (
-    <div className="min-h-screen bg-black flex flex-col p-8">
-      <button
-        onClick={() => navigate(-1)}
-        className="text-white mb-4 self-start bg-zinc-800 px-4 py-2 rounded hover:bg-zinc-700"
-      >
-        ← Back
-      </button>
+    <div className="min-h-screen bg-black flex flex-col items-center">
+      <div className="w-full p-4">
+        <button onClick={() => navigate(-1)} className="text-zinc-400 hover:text-white transition-colors">
+          ← Back to Gallery
+        </button>
+      </div>
 
-      <div className="flex justify-center items-center flex-1">
-        <div className="w-full max-w-4xl aspect-video bg-zinc-900 shadow-2xl overflow-hidden rounded-lg">
-          {/* Your HlsPlayer component */}
-          <HlsPlayer streamUrl={fullStreamUrl} />
-        </div>
+      <div className="w-full max-w-6xl aspect-video bg-zinc-900 shadow-2xl">
+        {/* Pass the full backend URL to your HlsPlayer */}
+        <HlsPlayer streamUrl={`${BASE_URL}/${videoData.videoPath}`} />
+      </div>
+
+      <div className="max-w-6xl w-full p-6 text-left">
+        <h1 className="text-white text-4xl font-black mb-2">{videoData.title}</h1>
+        <p className="text-zinc-400 text-lg leading-relaxed">{videoData.description}</p>
       </div>
     </div>
   );
