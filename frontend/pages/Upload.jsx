@@ -32,13 +32,21 @@ function Upload() {
       <div style={{ padding: "20px" }}>
         <h2>Send Data to Backend.</h2>
 
+        <p>Enter title</p>
         <input type="text" placeholder='title' value={title} onChange={(e) => setTitle(e.target.value)} />
         <br />
+        <p>Enter description</p>
         <input type="text" placeholder='description' value={description} onChange={(e) => setDescription(e.target.value)} />
         <br />
-        <input type="file" accept='video/*' onChange={(e) => setVideo(e.target.files[0])} />
+        <div>
+          <p>Upload video file</p>
+          <input type="file" accept='video/*' onChange={(e) => setVideo(e.target.files[0])} />
+        </div>
         <br />
-        <input type="file" accept='image/*' onChange={(e) => setThumbnail(e.target.files[0])} />
+        <div>
+          <p>Upload thumbnail file</p>
+          <input type="file" accept='image/*' onChange={(e) => setThumbnail(e.target.files[0])} />
+        </div>
         <br />
         <button onClick={handleClick}>Submit</button>
       </div>

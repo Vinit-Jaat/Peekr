@@ -1,21 +1,46 @@
 import express from "express";
-import fs from 'fs';
-import path from 'path';
+import fs from "fs";
+import path from "path";
+import { exec } from "child_process";
+import cors from "cors";
+import multer from "multer";
+
 import mongooseConnect from "./mongodbConnect.js";
 import VideoDb from "./mongodbConnectSchema.js";
-import multer from 'multer';
-import cors from 'cors';
 
 const app = express();
 mongooseConnect();
-app.use("/databaseVideos", express.static(path.join(process.cwd(), "databaseVideos")));
 
+/* =========================
+   CORS — MUST BE FIRST
+========================= */
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST"],
+  })
+);
+
+/* =========================
+   BODY PARSERS
+========================= */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
 
+/* =========================
+   STATIC FILES (HLS)
+========================= */
+app.use(
+  "/databaseVideos",
+  cors({ origin: "*" }),
+  express.static(path.join(process.cwd(), "databaseVideos"))
+);
+
+/* =========================
+   MULTER CONFIG
+========================= */
 const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
+  destination: (req, file, cb) => {
     const tempDir = "databaseVideos/temp";
     fs.mkdirSync(tempDir, { recursive: true });
     cb(null, tempDir);
@@ -24,19 +49,51 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + "-" + file.originalname);
   },
 });
+
 const upload = multer({
-  storage, limits: {
-    fileSize: 1024 * 1024 * 10000,
-  },
+  storage,
+  limits: { fileSize: 1024 * 1024 * 10000 },
 });
 
-// also add max upload of video and thumbnail to 1
-app.post('/upload',
+/* =========================
+   HLS CONVERTER
+========================= */
+const convertToHLS = (inputPath, outputDir) => {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const command = `
+      ffmpeg -y -i "${inputPath}"
+      -profile:v baseline
+      -level 3.0
+      -start_number 0
+      -hls_time 6
+      -hls_list_size 0
+      -hls_segment_filename "${outputDir}/segment%d.ts"
+      "${outputDir}/index.m3u8"
+    `.replace(/\n/g, " ");
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error(stderr);
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
+};
+
+/* =========================
+   UPLOAD API
+========================= */
+app.post(
+  "/upload",
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
-  ]), async (req, res) => {
-
+  ]),
+  async (req, res) => {
     try {
       const { title, description } = req.body;
 
@@ -47,72 +104,69 @@ app.post('/upload',
       const videoFile = req.files.video[0];
       const thumbnailFile = req.files.thumbnail[0];
 
-      const videoData = await VideoDb.create({
-        title,
-        description
-      });
+      const videoDoc = await VideoDb.create({ title, description });
+      const videoId = videoDoc._id.toString();
 
-      const videoId = videoData._id.toString();
       const videoDir = `databaseVideos/${videoId}`;
-      fs.mkdirSync(videoDir, { recursive: true })
+      const hlsDir = path.join(videoDir, "hls");
 
-      const videoPath = `${videoDir}/video${path.extname(videoFile.originalname)}`;
-      const thumbnailPath = `${videoDir}/thumbnail${path.extname(thumbnailFile.originalname)}`;
+      fs.mkdirSync(videoDir, { recursive: true });
 
-      fs.renameSync(videoFile.path, videoPath);
+      const tempVideoPath = path.join(videoDir, "original.mp4");
+      const thumbnailPath = `${videoDir}/thumbnail${path.extname(
+        thumbnailFile.originalname
+      )}`;
+
+      fs.renameSync(videoFile.path, tempVideoPath);
       fs.renameSync(thumbnailFile.path, thumbnailPath);
 
-      videoData.videoPath = videoPath;
-      videoData.thumbnailPath = thumbnailPath;
-      await videoData.save();
+      await convertToHLS(tempVideoPath, hlsDir);
+      fs.unlinkSync(tempVideoPath);
+
+      videoDoc.videoPath = `${videoDir}/hls/index.m3u8`;
+      videoDoc.thumbnailPath = thumbnailPath;
+      await videoDoc.save();
 
       res.status(201).json({
-        message: "Video saved successfully",
-        data: videoData,
+        success: true,
+        data: videoDoc,
       });
     } catch (error) {
-      res.status(500).json({
-        message: "Internal Server Error",
-        error: error.message
-      })
+      res.status(500).json({ message: error.message });
     }
-    console.log("Data recieved from /upload endpoint");
-    console.log(req.body);
-    console.log(req.file.video[0]);
-    console.log(req.file.thumbnail[0]);
-    console.log("upload successfull")
-  })
+  }
+);
 
+/* =========================
+   GET ALL VIDEOS
+========================= */
 app.get("/videos", async (req, res) => {
   try {
     const videos = await VideoDb.find().sort({ createdAt: -1 });
-    res.status(200).json({
-      success: true,
-      count: videos.length,
-      data: videos,
-    });
+    res.json({ success: true, data: videos });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch videos",
-      error: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 });
 
+/* =========================
+   GET SINGLE VIDEO (METADATA ONLY)
+========================= */
 app.get("/videos/:id", async (req, res) => {
   try {
     const video = await VideoDb.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ success: false, message: "Video not Found 404" })
+      return res.status(404).json({ message: "Video not found" });
     }
-    res.status(200).json({ success: true, data: video });
+    res.json({ success: true, data: video });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: error.message });
   }
-})
+});
 
+/* =========================
+   START SERVER
+========================= */
 app.listen(3000, () => {
-  console.log("Backend server is running on port 3000");
-  console.log("Frontend server is running on port 5173");
-})
+  console.log("Backend running on http://localhost:3000");
+});

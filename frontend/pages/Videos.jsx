@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import HlsPlayer from "./HlsPlayer";
 
 function Videos() {
   const [videos, setVideos] = useState([]);
@@ -15,18 +16,15 @@ function Videos() {
       <h1>Video List</h1>
 
       {videos.map(video => (
-        <div key={video._id}>
+        <div key={video._id} style={{ marginBottom: "40px" }}>
           <h3>{video.title}</h3>
           <p>{video.description}</p>
 
-          <video
-            src={`http://localhost:3000/${video.videoPath}`}
-            controls
-            width="300"
-            preload="metadata"
-          />
-
-          <br />
+          {/* 🔥 HLS Player */}
+          {/* <HlsPlayer */}
+          {/*   streamUrl={`http://localhost:3000/${video.videoPath}`} */}
+          {/* /> */}
+          {/* <br /> */}
 
           <img
             src={`http://localhost:3000/${video.thumbnailPath}`}
