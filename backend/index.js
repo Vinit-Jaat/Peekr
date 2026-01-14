@@ -8,6 +8,7 @@ import cors from 'cors';
 
 const app = express();
 mongooseConnect();
+app.use("/databaseVideos", express.static(path.join(process.cwd(), "databaseVideos")));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -25,7 +26,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage, limits: {
-    fileSize: 1024 * 1024 * 100,
+    fileSize: 1024 * 1024 * 10000,
   },
 });
 
@@ -81,6 +82,35 @@ app.post('/upload',
     console.log(req.file.thumbnail[0]);
     console.log("upload successfull")
   })
+
+app.get("/videos", async (req, res) => {
+  try {
+    const videos = await VideoDb.find().sort({ createdAt: -1 });
+    res.status(200).json({
+      success: true,
+      count: videos.length,
+      data: videos,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch videos",
+      error: error.message,
+    });
+  }
+});
+
+app.get("/videos/:id", async (req, res) => {
+  try {
+    const video = await VideoDb.findById(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: "Video not Found 404" })
+    }
+    res.status(200).json({ success: true, data: video });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
 
 app.listen(3000, () => {
   console.log("Backend server is running on port 3000");

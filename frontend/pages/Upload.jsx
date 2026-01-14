@@ -18,7 +18,7 @@ function Upload() {
     formData.append("thumbnail", thumbnail);
     formData.append("video", video);
 
-
+    console.log("Sumbit Button Pressed.");
     const response = await fetch("http://localhost:3000/upload", {
       method: "POST",
       body: formData
