@@ -165,6 +165,32 @@ app.get("/videos/:id", async (req, res) => {
 });
 
 /* =========================
+      SEARCH API
+========================= */
+app.get("/search", async (req, res) => {
+  try {
+    // FIX: Extract 'q' from req.query (destructuring)
+    const { q } = req.query;
+
+    // Now 'q' is a string like "action", not an object like { q: "action" }
+    if (!q) {
+      return res.status(400).json({ message: "Search Query is required" });
+    }
+
+    const videos = await VideoDb.find({
+      $or: [
+        { title: { $regex: q, $options: "i" } },
+        { tags: { $regex: q, $options: "i" } },
+      ],
+    }).sort({ createdAt: -1 });
+
+    res.json({ success: true, data: videos });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/* =========================
    START SERVER
 ========================= */
 app.listen(3000, () => {
