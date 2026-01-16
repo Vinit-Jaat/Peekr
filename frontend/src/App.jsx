@@ -4,23 +4,22 @@ import Upload from '../pages/Upload.jsx'
 import Home from '../pages/Home.jsx'
 import Videos from '../pages/Videos.jsx'
 import PlayerPage from '../pages/PlayerPage.jsx'
+import Header from '../components/Header.jsx'
+import Footer from '../components/Footer.jsx'
 
 
 function App() {
 
   return (
     <>
-      <nav>
-        <Link to='/' >Home</Link>
-        <Link to='/upload' >Upload</Link>
-        <Link to='/videos' >Videos</Link>
-      </nav >
+      <Header />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/videos" element={<Videos />} />
         <Route path="/watch/:id" element={<PlayerPage />} />
       </Routes>
+      <Footer />
     </>
   )
 }
