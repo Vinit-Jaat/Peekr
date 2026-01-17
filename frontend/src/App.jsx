@@ -11,16 +11,18 @@ import Footer from '../components/Footer.jsx'
 function App() {
 
   return (
-    <>
-      <Header />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/upload" element={<Upload />} />
-        <Route path="/videos" element={<Videos />} />
-        <Route path="/watch/:id" element={<PlayerPage />} />
-      </Routes>
+    <div className="flex flex-col min-h-screen w-full bg-[#09090b]">
+      < Header />
+      <main className="flex-grow w-full">
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/upload" element={<Upload />} />
+          <Route path="/videos" element={<Videos />} />
+          <Route path="/watch/:id" element={<PlayerPage />} />
+        </Routes>
+      </main>
       <Footer />
-    </>
+    </div>
   )
 }
 
