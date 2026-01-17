@@ -61,17 +61,34 @@ const upload = multer({
 const convertToHLS = (inputPath, outputDir) => {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(outputDir, { recursive: true });
-
+    /* cpu based
+        const command = `
+          ffmpeg -y -i "${inputPath}"
+          -profile:v baseline
+          -level 3.0
+          -start_number 0
+          -hls_time 6
+          -hls_list_size 0
+          -hls_segment_filename "${outputDir}/segment%d.ts"
+          "${outputDir}/index.m3u8"
+        `.replace(/\n/g, " ");
+        */
+    /* NVIDIA GPU Accelerated (GTX 1650) */
     const command = `
-      ffmpeg -y -i "${inputPath}"
-      -profile:v baseline
-      -level 3.0
-      -start_number 0
-      -hls_time 6
-      -hls_list_size 0
-      -hls_segment_filename "${outputDir}/segment%d.ts"
-      "${outputDir}/index.m3u8"
-    `.replace(/\n/g, " ");
+  ffmpeg -y -i "${inputPath}"
+  -c:v h264_nvenc
+  -preset p4
+  -tune hq
+  -vf "format=yuv420p"
+  -c:a aac
+  -ar 48000
+  -b:a 128k
+  -start_number 0
+  -hls_time 6
+  -hls_list_size 0
+  -hls_segment_filename "${outputDir}/segment%d.ts"
+  "${outputDir}/index.m3u8"
+`.replace(/\n/g, " ");
 
     exec(command, (error, stdout, stderr) => {
       if (error) {
