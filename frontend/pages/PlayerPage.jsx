@@ -27,7 +27,7 @@ const PlayerPage = () => {
   if (!videoData) {
     return (
       <div className="min-h-screen bg-[#09090b] flex items-center justify-center text-zinc-500 font-medium">
-        <div className="animate-pulse">Loading cinematic experience...</div>
+        <div className="animate-pulse">Loading please wait ...</div>
       </div>
     );
   }
@@ -57,17 +57,33 @@ const PlayerPage = () => {
         </div>
 
         {/* Video Info Section */}
-        <div className="w-full max-w-6xl mt-10 mb-20 text-left">
+        {/* Updated Metadata Section */}
+        <div className="w-full max-w-[1800px] mx-auto px-6 md:px-12 mt-10 mb-20 text-left">
           <div className="flex flex-col gap-4">
-            <h1 className="text-3xl md:text-5xl font-bold tracking-tight bg-gradient-to-b from-white to-zinc-400 bg-clip-text text-transparent">
+            {/* Title with extra-wide allowance */}
+            <h1 className="text-3xl md:text-5xl lg:text-6xl font-black tracking-tighter bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-transparent">
               {videoData.title}
             </h1>
 
-            <div className="h-1 w-20 bg-indigo-600 rounded-full"></div>
+            {/* Modern Indigo Accent Line */}
+            <div className="h-1.5 w-24 bg-indigo-600 rounded-full shadow-[0_0_15px_rgba(79,70,229,0.4)]"></div>
 
-            <p className="text-zinc-400 text-lg md:text-xl leading-relaxed max-w-4xl mt-2">
+            {/* Description: Removed max-w-4xl to allow it to fill the cinematic width */}
+            <p className="text-zinc-400 text-lg md:text-xl leading-relaxed mt-4 whitespace-pre-wrap">
               {videoData.description}
             </p>
+
+            {/* Optional: Add View/Date Metadata back for production feel */}
+            <div className="flex items-center gap-6 mt-4 text-zinc-500 text-sm font-bold uppercase tracking-widest">
+              <span className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-700"></div>
+                {videoData.views || 0} Views
+              </span>
+              <span className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-700"></div>
+                {new Date(videoData.createdAt).toLocaleDateString()}
+              </span>
+            </div>
           </div>
         </div>
       </main>
