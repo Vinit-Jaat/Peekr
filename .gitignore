@@ -3,14 +3,19 @@
 .env
 *.log
 
-# --- Backend (Node.js example) ---
+# --- Backend (Node.js) ---
 backend/node_modules/
 backend/dist/
 backend/.env
 backend/databaseVideos/
 
-# --- Frontend (React/Vue/Vite example) ---
+# --- Frontend (React/Vue/Vite) ---
 frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.env.localaseVideos/
+
+
+# ---  Backend (Dot net) ---
+/minimalApi/bin/ 
+/minimalApi/obj/
