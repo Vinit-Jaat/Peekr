@@ -154,9 +154,7 @@ app.post(
   }
 );
 
-/* =========================
-   GET ALL VIDEOS
-========================= */
+//re written in c sharp
 app.get("/videos", async (req, res) => {
   try {
     const videos = await VideoDb.find().sort({ createdAt: -1 });
@@ -166,9 +164,7 @@ app.get("/videos", async (req, res) => {
   }
 });
 
-/* =========================
-   GET SINGLE VIDEO (METADATA ONLY)
-========================= */
+// re written in c sharp
 app.get("/videos/:id", async (req, res) => {
   try {
     const video = await VideoDb.findById(req.params.id);
@@ -181,9 +177,7 @@ app.get("/videos/:id", async (req, res) => {
   }
 });
 
-/* =========================
-      SEARCH API
-========================= */
+// re written in c sharp
 app.get("/search", async (req, res) => {
   try {
     // FIX: Extract 'q' from req.query (destructuring)
@@ -207,9 +201,7 @@ app.get("/search", async (req, res) => {
   }
 });
 
-/* =========================
-   START SERVER
-========================= */
+// re written in c sharp
 app.listen(3000, () => {
   console.log("Backend running on http://localhost:3000");
 });
