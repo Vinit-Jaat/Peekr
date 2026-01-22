@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -61,6 +62,27 @@ app.MapGet(
                 statusCode: StatusCodes.Status500InternalServerError
             );
         }
+    }
+);
+
+app.MapGet(
+    "/search",
+    async (string? q) =>
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return Results.BadRequest("Search Query is required");
+
+        var filter = Builders<Video>.Filter.Or(
+            Builders<Video>.Filter.Regex(v => v.Title, new BsonRegularExpression(q, "i")),
+            Builders<Video>.Filter.Regex(v => v.Description, new BsonRegularExpression(q, "i"))
+        );
+
+        var videos = await videosCollection
+            .Find(filter)
+            .SortByDescending(v => v.CreatedAt)
+            .ToListAsync();
+
+        return Results.Ok(new { success = true, data = videos });
     }
 );
 
