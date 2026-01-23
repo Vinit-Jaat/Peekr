@@ -5,7 +5,13 @@ import { exec } from "child_process";
 import cors from "cors";
 import multer from "multer";
 import mongoose from "mongoose";
-import { S3Client, HeadBucketCommand, CreateBucketCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  ListObjectsV2Command,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 
 import mongooseConnect from "./mongodbConnect.js";
@@ -42,9 +48,14 @@ async function ensureBucketExists() {
 ensureBucketExists();
 
 /* =========================
-   MIDDLEWARE & MULTER
+   MIDDLEWARE
 ========================= */
-app.use(cors({ origin: "http://localhost:5173", methods: ["GET", "POST"] }));
+app.use(cors({
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+}));
+// Handle preflight requests for all routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -92,18 +103,17 @@ app.post(
     const videoFile = req.files?.video?.[0];
     const thumbnailFile = req.files?.thumbnail?.[0];
 
-    if (!videoFile || !thumbnailFile) {
+    if (!videoFile || !thumbnailFile)
       return res.status(400).json({ message: "Video and thumbnail required" });
-    }
 
     const videoId = new mongoose.Types.ObjectId().toString();
     const localHlsDir = path.join(process.cwd(), "temp_hls", videoId);
 
     try {
-      /* 1. Convert to HLS */
+      // 1️⃣ Convert video to HLS
       await convertToHLS(videoFile.path, localHlsDir);
 
-      /* 2. Upload HLS files */
+      // 2️⃣ Upload HLS files
       const hlsFiles = fs.readdirSync(localHlsDir);
       for (const file of hlsFiles) {
         const type = file.endsWith(".m3u8")
@@ -117,7 +127,7 @@ app.post(
         );
       }
 
-      /* 3. Upload thumbnail */
+      // 3️⃣ Upload thumbnail
       const thumbExt = path.extname(thumbnailFile.originalname);
       await uploadToSeaweed(
         thumbnailFile.path,
@@ -125,7 +135,7 @@ app.post(
         thumbnailFile.mimetype
       );
 
-      /* 4. Create MongoDB entry ONLY after success */
+      // 4️⃣ Create MongoDB entry after successful upload
       const videoDoc = await VideoDb.create({
         _id: videoId,
         title: req.body.title,
@@ -139,11 +149,10 @@ app.post(
       console.error("Upload failed:", error);
       res.status(500).json({ message: "Upload failed" });
     } finally {
-      /* 5. Cleanup ALWAYS */
+      // Cleanup local temp files
       try {
         if (fs.existsSync(localHlsDir))
           fs.rmSync(localHlsDir, { recursive: true, force: true });
-
         if (fs.existsSync(videoFile.path)) fs.unlinkSync(videoFile.path);
         if (fs.existsSync(thumbnailFile.path)) fs.unlinkSync(thumbnailFile.path);
       } catch (e) {
@@ -154,45 +163,88 @@ app.post(
 );
 
 /* =========================
-   READ & SEARCH APIS
+   READ & SEARCH
 ========================= */
 app.get("/videos", async (req, res) => {
-  try {
-    const videos = await VideoDb.find().sort({ createdAt: -1 });
-    res.json({ success: true, data: videos });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+  const videos = await VideoDb.find().sort({ createdAt: -1 }).limit(10);
+  res.json({ success: true, data: videos });
 });
 
 app.get("/videos/:id", async (req, res) => {
-  try {
-    const video = await VideoDb.findById(req.params.id);
-    if (!video) return res.status(404).json({ message: "Video not found" });
-    res.json({ success: true, data: video });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+  const video = await VideoDb.findById(req.params.id);
+  if (!video) return res.status(404).json({ message: "Video not found" });
+  res.json({ success: true, data: video });
 });
 
 app.get("/search", async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.status(400).json({ message: "Search query required" });
+
+  const videos = await VideoDb.find({
+    $or: [
+      { title: { $regex: q, $options: "i" } },
+      { description: { $regex: q, $options: "i" } },
+    ],
+  }).sort({ createdAt: -1 });
+
+  res.json({ success: true, data: videos });
+});
+
+/* =========================
+   DELETE VIDEO
+========================= */
+const deleteFromSeaweed = async (videoId) => {
+  const prefix = `${videoId}/`;
+  let continuationToken;
+  let totalDeleted = 0;
+
+  do {
+    const listed = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+
+    if (!listed.Contents?.length) break;
+
+    for (const obj of listed.Contents) {
+      await s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: obj.Key,
+        })
+      );
+      totalDeleted++;
+    }
+
+    continuationToken = listed.IsTruncated
+      ? listed.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
+
+  console.log(`Deleted ${totalDeleted} objects from SeaweedFS for ${videoId}`);
+};
+
+app.delete("/videos/:id", async (req, res) => {
   try {
-    const { q } = req.query;
-    if (!q) return res.status(400).json({ message: "Search query required" });
+    const video = await VideoDb.findById(req.params.id);
+    if (!video) return res.status(404).json({ message: "Video not found" });
 
-    const videos = await VideoDb.find({
-      $or: [
-        { title: { $regex: q, $options: "i" } },
-        { tags: { $regex: q, $options: "i" } },
-      ],
-    }).sort({ createdAt: -1 });
+    await deleteFromSeaweed(video._id.toString());
+    await VideoDb.deleteOne({ _id: video._id });
 
-    res.json({ success: true, data: videos });
+    res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Delete failed:", error);
+    res.status(500).json({ message: "Delete failed" });
   }
 });
 
+/* =========================
+   START SERVER
+========================= */
 app.listen(3000, () =>
   console.log("Backend running on http://localhost:3000")
 );
