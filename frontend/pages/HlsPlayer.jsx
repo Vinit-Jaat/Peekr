@@ -23,6 +23,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
   };
 
   const togglePlay = useCallback((e) => {
+    if (!videoRef.current) return;
     // Prevent toggling if clicking specific interactive elements
     if (e && (e.target.closest('.control-bar-buttons') || e.target.closest('.settings-menu'))) {
       return;
@@ -50,7 +51,8 @@ const CustomHlsPlayer = ({ streamUrl }) => {
 
   useEffect(() => {
     let hls;
-    if (videoRef.current) {
+    // FIX: Guard clause to prevent HLS.js from crashing if streamUrl is undefined
+    if (videoRef.current && streamUrl) {
       if (HLS.isSupported()) {
         hls = new HLS();
         hls.loadSource(streamUrl);
@@ -64,7 +66,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
 
   const handleTimeUpdate = () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isNaN(video.duration)) return;
     setProgress((video.currentTime / video.duration) * 100);
     if (video.buffered.length > 0) {
       const bufferedEnd = video.buffered.end(video.buffered.length - 1);
@@ -94,6 +96,9 @@ const CustomHlsPlayer = ({ streamUrl }) => {
     }
   };
 
+  // Prevent rendering logic if streamUrl is missing
+  if (!streamUrl) return <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-zinc-500">Loading stream...</div>;
+
   return (
     <div
       ref={containerRef}
@@ -103,12 +108,12 @@ const CustomHlsPlayer = ({ streamUrl }) => {
         clearTimeout(window.controlTimeout);
         window.controlTimeout = setTimeout(() => setShowControls(false), 3000);
       }}
-      onClick={togglePlay} // Handles click on the background/video
+      onClick={togglePlay}
       onContextMenu={(e) => e.preventDefault()}
     >
       <video
         ref={videoRef}
-        className="w-full h-full cursor-pointer" // Changed from pointer-events-none to cursor-pointer
+        className="w-full h-full cursor-pointer"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={() => setDuration(videoRef.current.duration)}
         playsInline
@@ -132,7 +137,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
           </div>
         </div>
 
-        {/* Bottom Bar - Marked as buttons area to prevent play/pause toggle when clicking icons */}
+        {/* Bottom Bar */}
         <div className="control-bar-buttons flex items-center justify-between">
           <div className="flex items-center gap-6">
             <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} className="text-white hover:text-indigo-400 transition-colors">
@@ -140,7 +145,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
             </button>
 
             <div className="flex items-center gap-3 group/vol">
-              <button onClick={(e) => { e.stopPropagation(); setVolume(volume === 0 ? 1 : 0); videoRef.current.volume = volume === 0 ? 1 : 0; }}>
+              <button onClick={(e) => { e.stopPropagation(); const nextVol = volume === 0 ? 1 : 0; setVolume(nextVol); videoRef.current.volume = nextVol; }}>
                 {volume === 0 ? <VolumeX size={22} className="text-zinc-400" /> : <Volume2 size={22} className="text-white" />}
               </button>
               <div className="relative w-0 group-hover/vol:w-24 transition-all duration-300 overflow-hidden h-1 bg-zinc-600 rounded-full">
