@@ -5,6 +5,7 @@ import { exec } from "child_process";
 import cors from "cors";
 import multer from "multer";
 import mongoose from "mongoose";
+import axios from "axios"; // Add this at the top with other importsimport axios from "axios"; // Add this at the top with other imports
 
 import {
   S3Client,
@@ -12,7 +13,6 @@ import {
   CreateBucketCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
-  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 
 import { Upload } from "@aws-sdk/lib-storage";
@@ -26,15 +26,12 @@ mongooseConnect();
 const BUCKET_NAME = "hls-videos";
 
 /* =========================
-   SEAWEEDFS S3 CLIENT
+   SEAWEEDFS CLIENT
 ========================= */
 const s3Client = new S3Client({
   endpoint: "http://127.0.0.1:8333",
   region: "us-east-1",
-  credentials: {
-    accessKeyId: "any",
-    secretAccessKey: "any",
-  },
+  credentials: { accessKeyId: "any", secretAccessKey: "any" },
   forcePathStyle: true,
 });
 
@@ -53,13 +50,7 @@ ensureBucketExists();
 /* =========================
    MIDDLEWARE
 ========================= */
-app.use(
-  cors({
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST", "DELETE"],
-  })
-);
-
+app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -72,26 +63,60 @@ const upload = multer({
 });
 
 /* =========================
-   HELPERS
+   HELPER: UPLOAD FILE TO SEAWEEDFS
 ========================= */
 const uploadToSeaweed = async (localPath, key, contentType) => {
-  const stream = fs.createReadStream(localPath);
   return new Upload({
     client: s3Client,
     params: {
       Bucket: BUCKET_NAME,
       Key: key,
-      Body: stream,
+      Body: fs.createReadStream(localPath),
       ContentType: contentType,
     },
   }).done();
 };
 
-const convertToHLS = (input, outDir) =>
+/* =========================
+   ABR HLS CONVERSION
+========================= */
+const convertToABRHLS = (input, outDir) =>
   new Promise((resolve, reject) => {
     fs.mkdirSync(outDir, { recursive: true });
-    const cmd = `ffmpeg -y -i "${input}" -c:v h264_nvenc -vf format=yuv420p -c:a aac -hls_time 6 -hls_list_size 0 -hls_segment_filename "${outDir}/segment%d.ts" "${outDir}/index.m3u8"`;
-    exec(cmd, (err) => (err ? reject(err) : resolve()));
+
+    const cmd = `
+ffmpeg -y -i "${input}" \
+-filter_complex "
+[0:v]split=5[v1][v2][v3][v4][v5];
+[v1]scale=426:240[v240];
+[v2]scale=640:360[v360];
+[v3]scale=854:480[v480];
+[v4]scale=1280:720[v720];
+[v5]scale=1920:1080[v1080]
+" \
+-map [v240] -map 0:a? -c:v:0 libx264 -b:v:0 400k \
+-map [v360] -map 0:a? -c:v:1 libx264 -b:v:1 800k \
+-map [v480] -map 0:a? -c:v:2 libx264 -b:v:2 1400k \
+-map [v720] -map 0:a? -c:v:3 libx264 -b:v:3 2800k \
+-map [v1080] -map 0:a? -c:v:4 libx264 -b:v:4 5000k \
+-c:a aac -ar 48000 \
+-f hls \
+-hls_time 6 \
+-hls_list_size 0 \
+-hls_segment_filename "${outDir}/v%v/segment_%03d.ts" \
+-master_pl_name master.m3u8 \
+-var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3 v:4,a:4" \
+"${outDir}/v%v/index.m3u8"
+`;
+
+    exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        console.error("FFMPEG STDERR:", stderr);
+        reject(new Error("FFmpeg conversion failed"));
+      } else {
+        resolve();
+      }
+    });
   });
 
 /* =========================
@@ -104,141 +129,112 @@ app.post(
     { name: "thumbnail", maxCount: 1 },
   ]),
   async (req, res) => {
-    const video = req.files?.video?.[0];
-    const thumb = req.files?.thumbnail?.[0];
-    if (!video || !thumb)
-      return res.status(400).json({ message: "Files missing" });
-
-    const videoId = new mongoose.Types.ObjectId().toString();
-    const hlsDir = path.join("temp_hls", videoId);
-
     try {
-      await convertToHLS(video.path, hlsDir);
+      const video = req.files?.video?.[0];
+      const thumb = req.files?.thumbnail?.[0];
+      if (!video || !thumb) return res.status(400).json({ success: false, message: "Files missing" });
 
-      for (const f of fs.readdirSync(hlsDir)) {
+      const videoId = new mongoose.Types.ObjectId().toString();
+      const hlsDir = path.join("temp_hls", videoId);
+
+      await convertToABRHLS(video.path, hlsDir);
+
+      // Recursively upload all files, skip any hidden temp folders
+      const walk = (dir) =>
+        fs.readdirSync(dir)
+          .filter(f => !f.startsWith(".")) // ignore hidden files like .upload
+          .flatMap(f => {
+            const p = path.join(dir, f);
+            return fs.statSync(p).isDirectory() ? walk(p) : [p];
+          });
+
+      for (const file of walk(hlsDir)) {
+        const rel = path.relative(hlsDir, file).replace(/\\/g, "/");
         await uploadToSeaweed(
-          path.join(hlsDir, f),
-          `${videoId}/hls/${f}`,
-          f.endsWith(".m3u8")
-            ? "application/x-mpegURL"
-            : "video/MP2T"
+          file,
+          `${videoId}/hls/${rel}`,
+          file.endsWith(".m3u8") ? "application/x-mpegURL" : "video/MP2T"
         );
       }
 
       const ext = path.extname(thumb.originalname);
-      await uploadToSeaweed(
-        thumb.path,
-        `${videoId}/thumbnail${ext}`,
-        thumb.mimetype
-      );
+      await uploadToSeaweed(thumb.path, `${videoId}/thumbnail${ext}`, thumb.mimetype);
 
       const doc = await VideoDb.create({
         _id: videoId,
         title: req.body.title,
         description: req.body.description,
-        videoPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/hls/index.m3u8`,
+        videoPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/hls/master.m3u8`,
         thumbnailPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/thumbnail${ext}`,
       });
 
       res.json({ success: true, data: doc });
-    } catch (e) {
-      res.status(500).json({ message: "Upload failed" });
+    } catch (err) {
+      console.error("UPLOAD ERROR:", err);
+      res.status(500).json({ success: false, message: "Upload failed", error: err.message });
     } finally {
-      fs.rmSync(hlsDir, { recursive: true, force: true });
-      fs.unlinkSync(video.path);
-      fs.unlinkSync(thumb.path);
+      fs.rmSync("temp_hls", { recursive: true, force: true });
+      fs.rmSync("temp_uploads", { recursive: true, force: true });
     }
   }
 );
 
 /* =========================
-   READ APIS
+   READ API
 ========================= */
 app.get("/videos", async (_, res) => {
-  res.json({ success: true, data: await VideoDb.find() });
-});
-
-app.get("/search", async (req, res) => {
-  const q = req.query.q;
-  res.json({
-    success: true,
-    data: await VideoDb.find({
-      $or: [
-        { title: new RegExp(q, "i") },
-        { description: new RegExp(q, "i") },
-      ],
-    }),
-  });
+  res.json({ success: true, data: await VideoDb.find().sort({ createdAt: -1 }) });
 });
 
 app.get("/videos/:id", async (req, res) => {
-  try {
-    const video = await VideoDb.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ message: "Video not found" });
-    }
-    res.json({ success: true, data: video });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch video" });
-  }
+  const video = await VideoDb.findById(req.params.id);
+  if (!video) return res.status(404).json({ success: false, message: "Video not found" });
+  res.json({ success: true, data: video });
 });
 
-
 /* =========================
-   DELETE FROM SEAWEEDFS
+   DELETE API (UPDATED)
 ========================= */
 const deleteFromSeaweed = async (videoId) => {
-  const prefix = `${videoId}/`;
-  let token;
+  if (!videoId) return;
 
-  do {
-    const res = await s3Client.send(
-      new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Prefix: prefix,
-        ContinuationToken: token,
-      })
-    );
+  // SeaweedFS usually maps S3 buckets to /buckets/BUCKET_NAME/ in the Filer
+  // Try both paths if you aren't sure, but this is the standard internal mapping:
+  const filerUrl = `http://127.0.0.1:8888/buckets/${BUCKET_NAME}/${videoId}/?recursive=true`;
 
-    if (!res.Contents?.length) break;
+  try {
+    console.log(`Sending recursive delete to: ${filerUrl}`);
+    await axios.delete(filerUrl);
+    console.log("Entire directory tree nuked.");
+  } catch (err) {
+    // If it fails, it's likely a 404 (wrong path) or connection error
+    console.error(`Filer delete failed: ${err.response?.status} - ${err.message}`);
 
-    await s3Client.send(
-      new DeleteObjectsCommand({
-        Bucket: BUCKET_NAME,
-        Delete: {
-          Objects: res.Contents.map(o => ({ Key: o.Key })),
-        },
-      })
-    );
-
-    token = res.IsTruncated ? res.NextContinuationToken : undefined;
-  } while (token);
-
-  // 🔥 FORCE DELETE DIRECTORY PLACEHOLDERS
-  await s3Client.send(
-    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: `${videoId}/hls/` })
-  );
-  await s3Client.send(
-    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: `${videoId}/` })
-  );
+    // Fallback: If the /buckets/ path fails, try without the /buckets/ prefix
+    try {
+      const fallbackUrl = `http://127.0.0.1:8888/${BUCKET_NAME}/${videoId}/?recursive=true`;
+      await axios.delete(fallbackUrl);
+    } catch (fallbackErr) {
+      console.error("All Filer delete attempts failed.");
+    }
+  }
 };
 
-/* =========================
-   DELETE API
-========================= */
 app.delete("/videos/:id", async (req, res) => {
   const video = await VideoDb.findById(req.params.id);
   if (!video) return res.sendStatus(404);
 
-  await deleteFromSeaweed(video._id.toString());
-  await VideoDb.deleteOne({ _id: video._id });
-
-  res.json({ success: true });
+  try {
+    await deleteFromSeaweed(video._id.toString());
+    await VideoDb.deleteOne({ _id: video._id });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("DELETE ERROR:", err);
+    res.status(500).json({ success: false, message: "Failed to delete video", error: err.message });
+  }
 });
 
 /* =========================
    START SERVER
 ========================= */
-app.listen(3000, () =>
-  console.log("Backend running on http://localhost:3000")
-);
+app.listen(3000, () => console.log("Backend running on http://localhost:3000"));
