@@ -88,17 +88,17 @@ const convertToABRHLS = (input, outDir) =>
 ffmpeg -y -i "${input}" \
 -filter_complex "
 [0:v]split=5[v1][v2][v3][v4][v5];
-[v1]scale=426:240[v240];
-[v2]scale=640:360[v360];
-[v3]scale=854:480[v480];
-[v4]scale=1280:720[v720];
-[v5]scale=1920:1080[v1080]
+[v1]scale=w=1920:h=1080[v1080];
+[v2]scale=w=1280:h=720[v720];
+[v3]scale=w=854:h=480[v480];
+[v4]scale=w=640:h=360[v360];
+[v5]scale=w=426:h=240[v240]
 " \
--map [v240] -map 0:a? -c:v:0 libx264 -b:v:0 400k \
--map [v360] -map 0:a? -c:v:1 libx264 -b:v:1 800k \
--map [v480] -map 0:a? -c:v:2 libx264 -b:v:2 1400k \
--map [v720] -map 0:a? -c:v:3 libx264 -b:v:3 2800k \
--map [v1080] -map 0:a? -c:v:4 libx264 -b:v:4 5000k \
+-map "[v1080]" -map 0:a? -c:v:0 h264_nvenc -b:v:0 5000k -preset p4 \
+-map "[v720]"  -map 0:a? -c:v:1 h264_nvenc -b:v:1 2800k -preset p4 \
+-map "[v480]"  -map 0:a? -c:v:2 h264_nvenc -b:v:2 1400k -preset p4 \
+-map "[v360]"  -map 0:a? -c:v:3 h264_nvenc -b:v:3 800k  -preset p4 \
+-map "[v240]"  -map 0:a? -c:v:4 h264_nvenc -b:v:4 400k  -preset p4 \
 -c:a aac -ar 48000 \
 -f hls \
 -hls_time 6 \
