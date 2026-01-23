@@ -5,13 +5,16 @@ import { exec } from "child_process";
 import cors from "cors";
 import multer from "multer";
 import mongoose from "mongoose";
+
 import {
   S3Client,
   HeadBucketCommand,
   CreateBucketCommand,
   ListObjectsV2Command,
+  DeleteObjectsCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+
 import { Upload } from "@aws-sdk/lib-storage";
 
 import mongooseConnect from "./mongodbConnect.js";
@@ -35,14 +38,14 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
-// Ensure bucket exists
+/* =========================
+   ENSURE BUCKET
+========================= */
 async function ensureBucketExists() {
   try {
     await s3Client.send(new HeadBucketCommand({ Bucket: BUCKET_NAME }));
-  } catch (error) {
-    if (error.$metadata?.httpStatusCode === 404) {
-      await s3Client.send(new CreateBucketCommand({ Bucket: BUCKET_NAME }));
-    }
+  } catch {
+    await s3Client.send(new CreateBucketCommand({ Bucket: BUCKET_NAME }));
   }
 }
 ensureBucketExists();
@@ -50,43 +53,44 @@ ensureBucketExists();
 /* =========================
    MIDDLEWARE
 ========================= */
-app.use(cors({
-  origin: "http://localhost:5173",
-  methods: ["GET", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
-}));
-// Handle preflight requests for all routes
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "DELETE"],
+  })
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+/* =========================
+   MULTER
+========================= */
 const upload = multer({
   dest: "temp_uploads/",
-  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10GB
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 },
 });
 
 /* =========================
-   HLS & S3 HELPERS
+   HELPERS
 ========================= */
-const uploadToSeaweed = async (localPath, s3Key, contentType) => {
+const uploadToSeaweed = async (localPath, key, contentType) => {
   const stream = fs.createReadStream(localPath);
-  const uploader = new Upload({
+  return new Upload({
     client: s3Client,
     params: {
       Bucket: BUCKET_NAME,
-      Key: s3Key,
+      Key: key,
       Body: stream,
       ContentType: contentType,
     },
-  });
-  return uploader.done();
+  }).done();
 };
 
-const convertToHLS = (inputPath, outputDir) =>
+const convertToHLS = (input, outDir) =>
   new Promise((resolve, reject) => {
-    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-
-    const cmd = `ffmpeg -y -i "${inputPath}" -c:v h264_nvenc -preset p4 -tune hq -vf "format=yuv420p" -c:a aac -ar 48000 -b:a 128k -start_number 0 -hls_time 6 -hls_list_size 0 -hls_segment_filename "${outputDir}/segment%d.ts" "${outputDir}/index.m3u8"`;
-
+    fs.mkdirSync(outDir, { recursive: true });
+    const cmd = `ffmpeg -y -i "${input}" -c:v h264_nvenc -vf format=yuv420p -c:a aac -hls_time 6 -hls_list_size 0 -hls_segment_filename "${outDir}/segment%d.ts" "${outDir}/index.m3u8"`;
     exec(cmd, (err) => (err ? reject(err) : resolve()));
   });
 
@@ -100,146 +104,136 @@ app.post(
     { name: "thumbnail", maxCount: 1 },
   ]),
   async (req, res) => {
-    const videoFile = req.files?.video?.[0];
-    const thumbnailFile = req.files?.thumbnail?.[0];
-
-    if (!videoFile || !thumbnailFile)
-      return res.status(400).json({ message: "Video and thumbnail required" });
+    const video = req.files?.video?.[0];
+    const thumb = req.files?.thumbnail?.[0];
+    if (!video || !thumb)
+      return res.status(400).json({ message: "Files missing" });
 
     const videoId = new mongoose.Types.ObjectId().toString();
-    const localHlsDir = path.join(process.cwd(), "temp_hls", videoId);
+    const hlsDir = path.join("temp_hls", videoId);
 
     try {
-      // 1️⃣ Convert video to HLS
-      await convertToHLS(videoFile.path, localHlsDir);
+      await convertToHLS(video.path, hlsDir);
 
-      // 2️⃣ Upload HLS files
-      const hlsFiles = fs.readdirSync(localHlsDir);
-      for (const file of hlsFiles) {
-        const type = file.endsWith(".m3u8")
-          ? "application/x-mpegURL"
-          : "video/MP2T";
-
+      for (const f of fs.readdirSync(hlsDir)) {
         await uploadToSeaweed(
-          path.join(localHlsDir, file),
-          `${videoId}/hls/${file}`,
-          type
+          path.join(hlsDir, f),
+          `${videoId}/hls/${f}`,
+          f.endsWith(".m3u8")
+            ? "application/x-mpegURL"
+            : "video/MP2T"
         );
       }
 
-      // 3️⃣ Upload thumbnail
-      const thumbExt = path.extname(thumbnailFile.originalname);
+      const ext = path.extname(thumb.originalname);
       await uploadToSeaweed(
-        thumbnailFile.path,
-        `${videoId}/thumbnail${thumbExt}`,
-        thumbnailFile.mimetype
+        thumb.path,
+        `${videoId}/thumbnail${ext}`,
+        thumb.mimetype
       );
 
-      // 4️⃣ Create MongoDB entry after successful upload
-      const videoDoc = await VideoDb.create({
+      const doc = await VideoDb.create({
         _id: videoId,
         title: req.body.title,
         description: req.body.description,
         videoPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/hls/index.m3u8`,
-        thumbnailPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/thumbnail${thumbExt}`,
+        thumbnailPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/thumbnail${ext}`,
       });
 
-      res.status(201).json({ success: true, data: videoDoc });
-    } catch (error) {
-      console.error("Upload failed:", error);
+      res.json({ success: true, data: doc });
+    } catch (e) {
       res.status(500).json({ message: "Upload failed" });
     } finally {
-      // Cleanup local temp files
-      try {
-        if (fs.existsSync(localHlsDir))
-          fs.rmSync(localHlsDir, { recursive: true, force: true });
-        if (fs.existsSync(videoFile.path)) fs.unlinkSync(videoFile.path);
-        if (fs.existsSync(thumbnailFile.path)) fs.unlinkSync(thumbnailFile.path);
-      } catch (e) {
-        console.error("Cleanup error:", e);
-      }
+      fs.rmSync(hlsDir, { recursive: true, force: true });
+      fs.unlinkSync(video.path);
+      fs.unlinkSync(thumb.path);
     }
   }
 );
 
 /* =========================
-   READ & SEARCH
+   READ APIS
 ========================= */
-app.get("/videos", async (req, res) => {
-  const videos = await VideoDb.find().sort({ createdAt: -1 }).limit(10);
-  res.json({ success: true, data: videos });
-});
-
-app.get("/videos/:id", async (req, res) => {
-  const video = await VideoDb.findById(req.params.id);
-  if (!video) return res.status(404).json({ message: "Video not found" });
-  res.json({ success: true, data: video });
+app.get("/videos", async (_, res) => {
+  res.json({ success: true, data: await VideoDb.find() });
 });
 
 app.get("/search", async (req, res) => {
-  const { q } = req.query;
-  if (!q) return res.status(400).json({ message: "Search query required" });
-
-  const videos = await VideoDb.find({
-    $or: [
-      { title: { $regex: q, $options: "i" } },
-      { description: { $regex: q, $options: "i" } },
-    ],
-  }).sort({ createdAt: -1 });
-
-  res.json({ success: true, data: videos });
+  const q = req.query.q;
+  res.json({
+    success: true,
+    data: await VideoDb.find({
+      $or: [
+        { title: new RegExp(q, "i") },
+        { description: new RegExp(q, "i") },
+      ],
+    }),
+  });
 });
 
+app.get("/videos/:id", async (req, res) => {
+  try {
+    const video = await VideoDb.findById(req.params.id);
+    if (!video) {
+      return res.status(404).json({ message: "Video not found" });
+    }
+    res.json({ success: true, data: video });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch video" });
+  }
+});
+
+
 /* =========================
-   DELETE VIDEO
+   DELETE FROM SEAWEEDFS
 ========================= */
 const deleteFromSeaweed = async (videoId) => {
   const prefix = `${videoId}/`;
-  let continuationToken;
-  let totalDeleted = 0;
+  let token;
 
   do {
-    const listed = await s3Client.send(
+    const res = await s3Client.send(
       new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
         Prefix: prefix,
-        ContinuationToken: continuationToken,
+        ContinuationToken: token,
       })
     );
 
-    if (!listed.Contents?.length) break;
+    if (!res.Contents?.length) break;
 
-    for (const obj of listed.Contents) {
-      await s3Client.send(
-        new DeleteObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: obj.Key,
-        })
-      );
-      totalDeleted++;
-    }
+    await s3Client.send(
+      new DeleteObjectsCommand({
+        Bucket: BUCKET_NAME,
+        Delete: {
+          Objects: res.Contents.map(o => ({ Key: o.Key })),
+        },
+      })
+    );
 
-    continuationToken = listed.IsTruncated
-      ? listed.NextContinuationToken
-      : undefined;
-  } while (continuationToken);
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
 
-  console.log(`Deleted ${totalDeleted} objects from SeaweedFS for ${videoId}`);
+  // 🔥 FORCE DELETE DIRECTORY PLACEHOLDERS
+  await s3Client.send(
+    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: `${videoId}/hls/` })
+  );
+  await s3Client.send(
+    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: `${videoId}/` })
+  );
 };
 
+/* =========================
+   DELETE API
+========================= */
 app.delete("/videos/:id", async (req, res) => {
-  try {
-    const video = await VideoDb.findById(req.params.id);
-    if (!video) return res.status(404).json({ message: "Video not found" });
+  const video = await VideoDb.findById(req.params.id);
+  if (!video) return res.sendStatus(404);
 
-    await deleteFromSeaweed(video._id.toString());
-    await VideoDb.deleteOne({ _id: video._id });
+  await deleteFromSeaweed(video._id.toString());
+  await VideoDb.deleteOne({ _id: video._id });
 
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Delete failed:", error);
-    res.status(500).json({ message: "Delete failed" });
-  }
+  res.json({ success: true });
 });
 
 /* =========================
