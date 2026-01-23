@@ -27,7 +27,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
   const [showSettings, setShowSettings] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
-  /* 🔥 NEW: Quality state */
+  /* 🔥 QUALITY STATE */
   const [levels, setLevels] = useState([]);
   const [currentLevel, setCurrentLevel] = useState(-1); // -1 = AUTO
 
@@ -68,7 +68,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
   }, [togglePlay]);
 
   /* =========================
-     HLS INIT (ADAPTIVE)
+     HLS INIT (FIXED)
   ========================= */
   useEffect(() => {
     if (!videoRef.current || !streamUrl) return;
@@ -84,11 +84,19 @@ const CustomHlsPlayer = ({ streamUrl }) => {
       hls.attachMedia(videoRef.current);
 
       hls.on(HLS.Events.MANIFEST_PARSED, () => {
-        setLevels(hls.levels);
-        setCurrentLevel(-1); // AUTO
+        // ✅ REMOVE audio-only (0p) levels
+        const videoLevels = hls.levels.filter(
+          (l) => typeof l.height === "number" && l.height > 0
+        );
+
+        setLevels(videoLevels);
+        setCurrentLevel(-1); // AUTO always default
       });
 
-      return () => hls.destroy();
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
     } else if (
       videoRef.current.canPlayType("application/vnd.apple.mpegurl")
     ) {
@@ -120,11 +128,29 @@ const CustomHlsPlayer = ({ streamUrl }) => {
     setShowSettings(false);
   };
 
-  /* 🔥 NEW: Change Quality */
-  const changeQuality = (level) => {
+  /* 🔥 FIXED QUALITY SWITCH */
+  const changeQuality = (uiIndex) => {
     if (!hlsRef.current) return;
-    hlsRef.current.currentLevel = level;
-    setCurrentLevel(level);
+
+    // AUTO
+    if (uiIndex === -1) {
+      hlsRef.current.currentLevel = -1;
+      setCurrentLevel(-1);
+      return;
+    }
+
+    const selectedHeight = levels[uiIndex]?.height;
+    if (!selectedHeight) return;
+
+    // Map UI index → real HLS index
+    const realIndex = hlsRef.current.levels.findIndex(
+      (l) => l.height === selectedHeight
+    );
+
+    if (realIndex !== -1) {
+      hlsRef.current.currentLevel = realIndex;
+      setCurrentLevel(uiIndex);
+    }
   };
 
   const toggleFullScreen = () => {
@@ -144,10 +170,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
       onMouseMove={() => {
         setShowControls(true);
         clearTimeout(window.controlTimeout);
-        window.controlTimeout = setTimeout(
-          () => setShowControls(false),
-          3000
-        );
+        window.controlTimeout = setTimeout(() => setShowControls(false), 3000);
       }}
       onClick={togglePlay}
       onContextMenu={(e) => e.preventDefault()}
@@ -156,9 +179,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
         ref={videoRef}
         className="w-full h-full cursor-pointer"
         onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={() =>
-          setDuration(videoRef.current.duration)
-        }
+        onLoadedMetadata={() => setDuration(videoRef.current.duration)}
         playsInline
       />
 
@@ -253,6 +274,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
                 <div className="p-3 text-xs font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
                   Playback Speed
                 </div>
+
                 {[0.5, 1, 1.5, 2].map((speed) => (
                   <button
                     key={speed}
@@ -260,39 +282,33 @@ const CustomHlsPlayer = ({ streamUrl }) => {
                     className="w-full px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-indigo-600 flex items-center justify-between"
                   >
                     {speed === 1 ? "Normal" : `${speed}x`}
-                    {playbackSpeed === speed && (
-                      <Check size={14} />
-                    )}
+                    {playbackSpeed === speed && <Check size={14} />}
                   </button>
                 ))}
 
-                {/* 🔥 QUALITY SELECTOR */}
-                {levels.length > 0 && (
-                  <>
-                    <div className="p-3 text-xs font-bold text-zinc-500 uppercase tracking-widest border-t border-zinc-800">
-                      Quality
-                    </div>
+                {/* QUALITY */}
+                <div className="p-3 text-xs font-bold text-zinc-500 uppercase tracking-widest border-t border-zinc-800">
+                  Quality
+                </div>
 
-                    <button
-                      onClick={() => changeQuality(-1)}
-                      className="w-full px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-indigo-600 flex justify-between"
-                    >
-                      Auto
-                      {currentLevel === -1 && <Check size={14} />}
-                    </button>
+                <button
+                  onClick={() => changeQuality(-1)}
+                  className="w-full px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-indigo-600 flex justify-between"
+                >
+                  Auto
+                  {currentLevel === -1 && <Check size={14} />}
+                </button>
 
-                    {levels.map((l, i) => (
-                      <button
-                        key={i}
-                        onClick={() => changeQuality(i)}
-                        className="w-full px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-indigo-600 flex justify-between"
-                      >
-                        {l.height}p
-                        {currentLevel === i && <Check size={14} />}
-                      </button>
-                    ))}
-                  </>
-                )}
+                {levels.map((l, i) => (
+                  <button
+                    key={i}
+                    onClick={() => changeQuality(i)}
+                    className="w-full px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-indigo-600 flex justify-between"
+                  >
+                    {l.height}p
+                    {currentLevel === i && <Check size={14} />}
+                  </button>
+                ))}
               </div>
             )}
 
