@@ -93,7 +93,7 @@ const Home = () => {
                 {/* Custom Card Wrapper to make it look premium */}
                 <div className="relative aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 transition-transform duration-300 group-hover:-translate-y-2 shadow-xl">
                   <img
-                    src={`${BASE_URL}/${video.thumbnailPath}`}
+                    src={video.thumbnailPath}
                     alt={video.title}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                   />
