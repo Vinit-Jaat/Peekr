@@ -87,27 +87,56 @@ const convertToABRHLS = (input, outDir) =>
     const cmd = `
 ffmpeg -y -i "${input}" \
 -filter_complex "
-[0:v]split=5[v1][v2][v3][v4][v5];
+[0:v]split=6[v1][v2][v3][v4][v5][v6];
 [v1]scale=w=1920:h=1080[v1080];
 [v2]scale=w=1280:h=720[v720];
 [v3]scale=w=854:h=480[v480];
 [v4]scale=w=640:h=360[v360];
-[v5]scale=w=426:h=240[v240]
+[v5]scale=w=426:h=240[v240];
+[v6]scale=w=256:h=144[v144]
 " \
--map "[v1080]" -map 0:a? -c:v:0 h264_nvenc -b:v:0 5000k -preset p4 \
--map "[v720]"  -map 0:a? -c:v:1 h264_nvenc -b:v:1 2800k -preset p4 \
--map "[v480]"  -map 0:a? -c:v:2 h264_nvenc -b:v:2 1400k -preset p4 \
--map "[v360]"  -map 0:a? -c:v:3 h264_nvenc -b:v:3 800k  -preset p4 \
--map "[v240]"  -map 0:a? -c:v:4 h264_nvenc -b:v:4 400k  -preset p4 \
--c:a aac -ar 48000 \
+-map "[v1080]" -map 0:a? -c:v:0 h264_nvenc -rc vbr -cq 28 -b:v:0 5000k -maxrate:v:0 5350k -bufsize:v:0 7500k -preset p4 \
+-map "[v720]"  -map 0:a? -c:v:1 h264_nvenc -rc vbr -cq 28 -b:v:1 2800k -maxrate:v:1 3000k -bufsize:v:1 4200k -preset p4 \
+-map "[v480]"  -map 0:a? -c:v:2 h264_nvenc -rc vbr -cq 28 -b:v:2 1400k -maxrate:v:2 1500k -bufsize:v:2 2100k -preset p4 \
+-map "[v360]"  -map 0:a? -c:v:3 h264_nvenc -rc vbr -cq 28 -b:v:3 800k  -maxrate:v:3 850k  -bufsize:v:3 1200k -preset p4 \
+-map "[v240]"  -map 0:a? -c:v:4 h264_nvenc -rc vbr -cq 30 -b:v:4 400k  -maxrate:v:4 450k  -bufsize:v:4 600k  -preset p4 \
+-map "[v144]"  -map 0:a? -c:v:5 h264_nvenc -rc vbr -cq 32 -b:v:5 80k   -maxrate:v:5 100k -bufsize:v:5 40k  -preset p7 \
+-c:a aac -ar 48000 -b:a 64k \
 -f hls \
--hls_time 6 \
+-hls_time 4 \
 -hls_list_size 0 \
 -hls_segment_filename "${outDir}/v%v/segment_%03d.ts" \
 -master_pl_name master.m3u8 \
--var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3 v:4,a:4" \
+-var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3 v:4,a:4 v:5,a:5" \
 "${outDir}/v%v/index.m3u8"
 `;
+
+    //    const cmd = `
+    //ffmpeg -y -i "${input}" \
+    //-filter_complex "
+    //[0:v]split=6[v1][v2][v3][v4][v5][v6];
+    //[v1]scale=w=1920:h=1080[v1080];
+    //[v2]scale=w=1280:h=720[v720];
+    //[v3]scale=w=854:h=480[v480];
+    //[v4]scale=w=640:h=360[v360];
+    //[v5]scale=w=426:h=240[v240];
+    //[v6]scale=w=256:h=144[v144]
+    //" \
+    //-map "[v1080]" -map 0:a? -c:v:0 h264_nvenc -b:v:0 5000k -preset p4 \
+    //-map "[v720]"  -map 0:a? -c:v:1 h264_nvenc -b:v:1 2800k -preset p4 \
+    //-map "[v480]"  -map 0:a? -c:v:2 h264_nvenc -b:v:2 1400k -preset p4 \
+    //-map "[v360]"  -map 0:a? -c:v:3 h264_nvenc -b:v:3 800k  -preset p4 \
+    //-map "[v240]"  -map 0:a? -c:v:4 h264_nvenc -b:v:4 400k  -preset p4 \
+    //-map "[v144]"  -map 0:a? -c:v:5 h264_nvenc -b:v:5 200k  -preset p4 \
+    //-c:a aac -ar 48000 \
+    //-f hls \
+    //-hls_time 6 \
+    //-hls_list_size 0 \
+    //-hls_segment_filename "${outDir}/v%v/segment_%03d.ts" \
+    //-master_pl_name master.m3u8 \
+    //-var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3 v:4,a:4 v:5,a:5" \
+    //"${outDir}/v%v/index.m3u8"
+    //`;
 
     exec(cmd, (err, stdout, stderr) => {
       if (err) {
