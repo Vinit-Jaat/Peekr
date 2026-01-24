@@ -9,15 +9,27 @@ const Home = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
 
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+
+  const LIMIT = 5;
+
   const BASE_URL = "http://localhost:3000";
 
-  const fetchVideos = async (query = "") => {
+  const fetchVideos = async (query = "", pageNumber = 1) => {
     setLoading(true);
-    const endpoint = query ? `/search?q=${query}` : "/videos";
+
+    const endpoint = query
+      ? `/search?q=${query}&page=${pageNumber}&limit=${LIMIT}`
+      : `/videos?page=${pageNumber}&limit=${LIMIT}`;
+
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`);
       const data = await res.json();
+
       setVideos(data.data || []);
+      setPage(pageNumber);
+      setTotalPages(data.pagination?.totalPages || 1);
     } catch (err) {
       console.error("Fetch error:", err);
     } finally {
@@ -26,12 +38,12 @@ const Home = () => {
   };
 
   useEffect(() => {
-    fetchVideos();
+    fetchVideos("", 1);
   }, []);
 
   const handleSearch = (e) => {
     e.preventDefault();
-    fetchVideos(searchQuery);
+    fetchVideos(searchQuery, 1);
   };
 
   if (loading && videos.length === 0) {
@@ -125,6 +137,30 @@ const Home = () => {
           </div>
         )}
       </section>
+
+      {totalPages > 1 && (
+        <div className="flex justify-center items-center gap-6 mt-16">
+          <button
+            disabled={page === 1}
+            onClick={() => fetchVideos(searchQuery, page - 1)}
+            className="px-5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 disabled:opacity-40 hover:bg-zinc-800 transition"
+          >
+            Prev
+          </button>
+
+          <span className="text-zinc-400 text-sm">
+            Page <span className="text-white font-bold">{page}</span> of {totalPages}
+          </span>
+
+          <button
+            disabled={page === totalPages}
+            onClick={() => fetchVideos(searchQuery, page + 1)}
+            className="px-5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 disabled:opacity-40 hover:bg-zinc-800 transition"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 };
