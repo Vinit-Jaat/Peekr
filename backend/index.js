@@ -211,8 +211,33 @@ app.post(
 /* =========================
    READ API
 ========================= */
-app.get("/videos", async (_, res) => {
-  res.json({ success: true, data: await VideoDb.find().sort({ createdAt: -1 }) });
+app.get("/videos", async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
+    const skip = (page - 1) * limit;
+
+    const [videos, total] = await Promise.all([
+      VideoDb.find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      VideoDb.countDocuments()
+    ]);
+
+    res.json({
+      success: true,
+      data: videos,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 app.get("/videos/:id", async (req, res) => {
@@ -261,6 +286,35 @@ app.delete("/videos/:id", async (req, res) => {
     console.error("DELETE ERROR:", err);
     res.status(500).json({ success: false, message: "Failed to delete video", error: err.message });
   }
+});
+
+app.get("/search", async (req, res) => {
+  const { q = "", page = 1, limit = 12 } = req.query;
+
+  const skip = (page - 1) * limit;
+
+  const query = {
+    title: { $regex: q, $options: "i" }
+  };
+
+  const [videos, total] = await Promise.all([
+    VideoDb.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit)),
+    VideoDb.countDocuments(query)
+  ]);
+
+  res.json({
+    success: true,
+    data: videos,
+    pagination: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+      totalPages: Math.ceil(total / limit)
+    }
+  });
 });
 
 /* =========================
