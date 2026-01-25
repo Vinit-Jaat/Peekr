@@ -31,14 +31,14 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
   const [levels, setLevels] = useState([]);
   const [currentLevel, setCurrentLevel] = useState(-1); // -1 = AUTO
 
-
-
   const [showPreview, setShowPreview] = useState(false);
   const [previewTime, setPreviewTime] = useState(0);
   const [previewPos, setPreviewPos] = useState(0);
-  const [previewFrame, setPreviewFrame] = useState({ col: 0, row: 0, sprite: 0 });
+  const [previewFrame, setPreviewFrame] = useState({ sprite: 0 });
 
   const [lastSprite, setLastSprite] = useState(null);
+  const [totalSprites, setTotalSprites] = useState(0);
+  const [spriteUrls, setSpriteUrls] = useState({});
 
   const formatTime = (time) => {
     if (isNaN(time)) return "0:00";
@@ -65,20 +65,13 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
     }
   }, []);
 
-  /* 🔥 PRE-LOAD SPRITE IMAGES */
+  /* 🔥 PRE-LOAD AND VALIDATE SPRITE IMAGES */
+
+
   useEffect(() => {
-    if (!preview || !duration) return;
-
-    const totalFrames = Math.ceil(duration / preview.frameInterval);
-    const framesPerSprite = preview.cols * preview.rows;
-    const totalSprites = Math.ceil(totalFrames / framesPerSprite);
-
-    for (let i = 1; i <= totalSprites; i++) {
-      const img = new Image();
-      const spriteNum = String(i).padStart(3, '0');
-      img.src = `${preview.spriteBaseUrl}/preview_${spriteNum}.jpg`;
-    }
-  }, [preview, duration]);
+    if (!preview?.spriteCount) return;
+    setTotalSprites(preview.spriteCount);
+  }, [preview]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -90,6 +83,8 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
+
+
 
   /* =========================
       HLS INIT (FIXED FOR NS_BINDING_ABORTED)
@@ -199,6 +194,19 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
     }
   };
 
+  const getSpriteUrl = (spriteIndex) => {
+    if (!preview) return '';
+
+    // Try to get from loaded sprites first
+    if (spriteUrls[spriteIndex]) {
+      return spriteUrls[spriteIndex];
+    }
+
+    // Fallback to default naming
+    const spriteNum = String(spriteIndex + 1).padStart(3, '0');
+    return `${preview.spriteBaseUrl}/preview_${spriteNum}.jpg`;
+  };
+
   return (
     <div
       ref={containerRef}
@@ -211,49 +219,29 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
       onClick={togglePlay}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* FIX: Removed src={streamUrl} from here. 
-          Standard <video> tags abort .m3u8 sources on desktop browsers.
-          HLS.js handles the source via attachMedia.
-      */}
+      {/* REMOVED muted attribute to enable audio */}
       <video
         ref={videoRef}
         className="w-full h-full cursor-pointer"
         onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={() => setDuration(videoRef.current.duration)}
+        onLoadedMetadata={() => {
+          if (videoRef.current) {
+            setDuration(videoRef.current.duration);
+            console.log('Video duration:', videoRef.current.duration);
+          }
+        }}
         playsInline
-        muted
       />
 
       <div
         className={`absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent transition-opacity duration-500 flex flex-col justify-end p-4 md:p-8 ${showControls ? "opacity-100" : "opacity-0"
           }`}
       >
-
-        {showPreview && preview && (
-          <div
-            className="absolute -top-28 w-40 h-24 rounded-lg overflow-hidden bg-black border border-zinc-700 shadow-xl pointer-events-none"
-            style={{
-              left: `calc(${previewPos * 100}% - 80px)`
-            }}
-          >
-            <div
-              className="w-full h-full bg-no-repeat"
-              style={{
-                backgroundImage: `url(${preview.spriteBaseUrl}/preview_${String(previewFrame.sprite + 1).padStart(3, '0')}.jpg)`,
-                backgroundSize: `${preview.frameWidth * preview.cols}px ${preview.frameHeight * preview.rows}px`,
-                backgroundPosition: `-${previewFrame.col * preview.frameWidth}px -${previewFrame.row * preview.frameHeight}px`
-              }}
-            />
-            <div className="absolute bottom-1 right-1 text-[10px] bg-black/80 px-1 rounded">
-              {formatTime(previewTime)}
-            </div>
-          </div>
-        )}
         {/* Scrubber */}
         <div
           className="relative w-full h-1.5 bg-zinc-600/50 rounded-full mb-6 cursor-pointer group/scrubber hover:h-2 transition-all"
           onMouseMove={(e) => {
-            if (!preview || !duration) return;
+            if (!preview || !duration || !totalSprites) return;
 
             const rect = e.currentTarget.getBoundingClientRect();
             const percent = Math.min(
@@ -263,25 +251,39 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
 
             const time = percent * duration;
 
-            const frameIndex = Math.floor(
-              time / preview.frameInterval
-            );
             const framesPerSprite = preview.cols * preview.rows;
-            const spriteIndex = Math.floor(frameIndex / framesPerSprite);
+            const spriteDuration = duration / totalSprites;
 
-            const localIndex = frameIndex % framesPerSprite;
-            const col = localIndex % preview.cols;
-            const row = Math.floor(localIndex / preview.cols);
+            const spriteIndex = Math.min(
+              Math.floor(time / spriteDuration),
+              totalSprites - 1
+            );
+
+            const timeIntoSprite = time - spriteIndex * spriteDuration;
+
+            const localFrameIndex = Math.min(
+              Math.floor((timeIntoSprite / spriteDuration) * framesPerSprite),
+              framesPerSprite - 1
+            );
 
             setPreviewTime(time);
             setPreviewPos(percent);
 
-            if (spriteIndex !== lastSprite) {
-              setLastSprite(spriteIndex);
-            }
+            setPreviewFrame({
+              sprite: spriteIndex,
+              col: localFrameIndex % preview.cols,
+              row: Math.floor(localFrameIndex / preview.cols),
+            });
 
-            setPreviewFrame({ col, row, sprite: spriteIndex });
             setShowPreview(true);
+
+            console.log('Preview data:', {
+              time,
+              percent,
+              spriteIndex,
+              totalSprites,
+              spriteUrl: getSpriteUrl(spriteIndex)
+            });
           }}
           onMouseLeave={() => setShowPreview(false)}
           onClick={(e) => {
@@ -292,6 +294,30 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
               pos * videoRef.current.duration;
           }}
         >
+          {/* Preview Tooltip */}
+          {showPreview && preview && totalSprites > 0 && previewFrame.sprite >= 0 && (
+            <div
+              className="absolute -top-28 z-50 rounded-lg overflow-hidden bg-black border border-zinc-700 shadow-xl pointer-events-none"
+              style={{
+                left: `${previewPos * 100}%`,
+                transform: "translateX(-50%)",
+                width: "160px",
+                height: "90px",
+                backgroundColor: '#000'
+              }}
+            >
+              <div
+                className="w-full h-full bg-cover bg-center bg-no-repeat"
+                style={{
+                  backgroundImage: `url(${getSpriteUrl(previewFrame.sprite)})`,
+                }}
+              />
+              <div className="absolute bottom-1 right-1 text-[10px] bg-black/80 px-1.5 py-0.5 rounded">
+                {formatTime(previewTime)}
+              </div>
+            </div>
+          )}
+
           <div
             className="absolute top-0 left-0 h-full bg-zinc-400/40 rounded-full"
             style={{ width: `${buffered}%` }}
@@ -352,7 +378,7 @@ const CustomHlsPlayer = ({ streamUrl, preview }) => {
             </div>
 
             <span className="text-sm font-medium text-zinc-300 select-none tracking-wider">
-              {formatTime(videoRef.current?.currentTime)} /{" "}
+              {formatTime(videoRef.current?.currentTime || 0)} /{" "}
               {formatTime(duration)}
             </span>
           </div>
