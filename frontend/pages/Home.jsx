@@ -16,7 +16,7 @@ const Home = () => {
   // Fixed: Track specific video ID instead of a boolean
   const [hoveredId, setHoveredId] = useState(null);
 
-  const LIMIT = 5;
+  const LIMIT = 8;
   const BASE_URL = "http://localhost:3000";
 
   const hoverTimeout = useRef(null);
