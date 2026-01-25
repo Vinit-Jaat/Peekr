@@ -16,6 +16,14 @@ const UserSchema = new mongoose.Schema(
     videoPath: {
       type: String,
     },
+    preview: {
+      spriteBaseUrl: { type: String }, // "/previews/abc123"
+      frameInterval: { type: Number, default: 2 }, // seconds
+      cols: { type: Number, default: 5 },
+      rows: { type: Number, default: 5 },
+      frameWidth: { type: Number, default: 160 },
+      frameHeight: { type: Number, default: 90 },
+    },
     thumbnailPath: {
       type: String,
     }
