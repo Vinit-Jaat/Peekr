@@ -11,7 +11,7 @@ import {
   Check,
 } from "lucide-react";
 
-const CustomHlsPlayer = ({ streamUrl }) => {
+const CustomHlsPlayer = ({ streamUrl, preview }) => {
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const hlsRef = useRef(null);
@@ -30,6 +30,15 @@ const CustomHlsPlayer = ({ streamUrl }) => {
   /* 🔥 QUALITY STATE */
   const [levels, setLevels] = useState([]);
   const [currentLevel, setCurrentLevel] = useState(-1); // -1 = AUTO
+
+
+
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewTime, setPreviewTime] = useState(0);
+  const [previewPos, setPreviewPos] = useState(0);
+  const [previewFrame, setPreviewFrame] = useState({ col: 0, row: 0, sprite: 0 });
+
+  const [lastSprite, setLastSprite] = useState(null);
 
   const formatTime = (time) => {
     if (isNaN(time)) return "0:00";
@@ -55,6 +64,21 @@ const CustomHlsPlayer = ({ streamUrl }) => {
       setIsPlaying(false);
     }
   }, []);
+
+  /* 🔥 PRE-LOAD SPRITE IMAGES */
+  useEffect(() => {
+    if (!preview || !duration) return;
+
+    const totalFrames = Math.ceil(duration / preview.frameInterval);
+    const framesPerSprite = preview.cols * preview.rows;
+    const totalSprites = Math.ceil(totalFrames / framesPerSprite);
+
+    for (let i = 1; i <= totalSprites; i++) {
+      const img = new Image();
+      const spriteNum = String(i).padStart(3, '0');
+      img.src = `${preview.spriteBaseUrl}/preview_${spriteNum}.jpg`;
+    }
+  }, [preview, duration]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -197,15 +221,69 @@ const CustomHlsPlayer = ({ streamUrl }) => {
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={() => setDuration(videoRef.current.duration)}
         playsInline
+        muted
       />
 
       <div
         className={`absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent transition-opacity duration-500 flex flex-col justify-end p-4 md:p-8 ${showControls ? "opacity-100" : "opacity-0"
           }`}
       >
+
+        {showPreview && preview && (
+          <div
+            className="absolute -top-28 w-40 h-24 rounded-lg overflow-hidden bg-black border border-zinc-700 shadow-xl pointer-events-none"
+            style={{
+              left: `calc(${previewPos * 100}% - 80px)`
+            }}
+          >
+            <div
+              className="w-full h-full bg-no-repeat"
+              style={{
+                backgroundImage: `url(${preview.spriteBaseUrl}/preview_${String(previewFrame.sprite + 1).padStart(3, '0')}.jpg)`,
+                backgroundSize: `${preview.frameWidth * preview.cols}px ${preview.frameHeight * preview.rows}px`,
+                backgroundPosition: `-${previewFrame.col * preview.frameWidth}px -${previewFrame.row * preview.frameHeight}px`
+              }}
+            />
+            <div className="absolute bottom-1 right-1 text-[10px] bg-black/80 px-1 rounded">
+              {formatTime(previewTime)}
+            </div>
+          </div>
+        )}
         {/* Scrubber */}
         <div
           className="relative w-full h-1.5 bg-zinc-600/50 rounded-full mb-6 cursor-pointer group/scrubber hover:h-2 transition-all"
+          onMouseMove={(e) => {
+            if (!preview || !duration) return;
+
+            const rect = e.currentTarget.getBoundingClientRect();
+            const percent = Math.min(
+              Math.max((e.clientX - rect.left) / rect.width, 0),
+              1
+            );
+
+            const time = percent * duration;
+
+            const frameIndex = Math.floor(
+              time / preview.frameInterval
+            );
+            const framesPerSprite = preview.cols * preview.rows;
+            const spriteIndex = Math.floor(frameIndex / framesPerSprite);
+
+            const localIndex = frameIndex % framesPerSprite;
+            const col = localIndex % preview.cols;
+            const row = Math.floor(localIndex / preview.cols);
+
+            setPreviewTime(time);
+            setPreviewPos(percent);
+
+            if (spriteIndex !== lastSprite) {
+              setLastSprite(spriteIndex);
+            }
+
+            setPreviewFrame({ col, row, sprite: spriteIndex });
+            setShowPreview(true);
+          }}
+          onMouseLeave={() => setShowPreview(false)}
           onClick={(e) => {
             e.stopPropagation();
             const rect = e.currentTarget.getBoundingClientRect();
@@ -355,7 +433,7 @@ const CustomHlsPlayer = ({ streamUrl }) => {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 };
 
