@@ -68,15 +68,24 @@ const CustomHlsPlayer = ({ streamUrl }) => {
   }, [togglePlay]);
 
   /* =========================
-     HLS INIT (FIXED)
+      HLS INIT (FIXED FOR NS_BINDING_ABORTED)
   ========================= */
   useEffect(() => {
     if (!videoRef.current || !streamUrl) return;
+
+    // Cleanup previous instance before starting new one
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+    }
 
     if (HLS.isSupported()) {
       const hls = new HLS({
         autoStartLoad: true,
         capLevelToPlayerSize: true,
+        // Prevent credentials/pre-flight issues that cause aborts
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = false;
+        },
       });
 
       hlsRef.current = hls;
@@ -94,12 +103,15 @@ const CustomHlsPlayer = ({ streamUrl }) => {
       });
 
       return () => {
-        hls.destroy();
-        hlsRef.current = null;
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
       };
     } else if (
       videoRef.current.canPlayType("application/vnd.apple.mpegurl")
     ) {
+      // For Safari: Only set src if HLS.js is not supported
       videoRef.current.src = streamUrl;
     }
   }, [streamUrl]);
@@ -175,6 +187,10 @@ const CustomHlsPlayer = ({ streamUrl }) => {
       onClick={togglePlay}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {/* FIX: Removed src={streamUrl} from here. 
+          Standard <video> tags abort .m3u8 sources on desktop browsers.
+          HLS.js handles the source via attachMedia.
+      */}
       <video
         ref={videoRef}
         className="w-full h-full cursor-pointer"
