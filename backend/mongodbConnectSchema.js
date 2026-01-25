@@ -19,6 +19,7 @@ const UserSchema = new mongoose.Schema(
     preview: {
       spriteBaseUrl: { type: String }, // "/previews/abc123"
       frameInterval: { type: Number, default: 2 }, // seconds
+      spriteCount: { type: Number },
       cols: { type: Number, default: 5 },
       rows: { type: Number, default: 5 },
       frameWidth: { type: Number, default: 160 },
