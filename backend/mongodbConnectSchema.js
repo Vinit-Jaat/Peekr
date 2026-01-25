@@ -10,6 +10,9 @@ const UserSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    previewPath: {
+      type: String,
+    },
     videoPath: {
       type: String,
     },
