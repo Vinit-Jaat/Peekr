@@ -157,9 +157,10 @@ ffmpeg -y -i "${input}" \
     //`;
 
     exec(cmd, (err, stdout, stderr) => {
+      console.log("FFMPEG STDOUT:", stdout);
+      console.error("FFMPEG STDERR:", stderr);
       if (err) {
-        console.error("FFMPEG STDERR:", stderr);
-        reject(new Error("FFmpeg conversion failed"));
+        reject(new Error(`FFmpeg conversion failed: ${stderr || err.message}`));
       } else {
         resolve();
       }
@@ -298,7 +299,11 @@ app.post(
       res.json({ success: true, data: doc });
     } catch (err) {
       console.error("UPLOAD ERROR:", err);
-      res.status(500).json({ success: false, message: "Upload failed", error: err.message });
+      res.status(500).json({
+        success: false,
+        message: "Upload failed",
+        error: err.message
+      });
     } finally {
       fs.rmSync("temp_hls", { recursive: true, force: true });
       fs.rmSync("temp_uploads", { recursive: true, force: true });
