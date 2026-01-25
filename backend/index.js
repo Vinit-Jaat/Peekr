@@ -192,25 +192,31 @@ ffmpeg -y -i "${input}" \
   });
 
 
-const generatePreviewSprites = (input, outDir) =>
-  new Promise((resolve, reject) => {
-    fs.mkdirSync(outDir, { recursive: true });
+const generatePreviewSprites = async (input, outDir, interval = 5) => {
+  fs.mkdirSync(outDir, { recursive: true });
 
-    const cmd = `
+  const duration = await getVideoDuration(input); // get video duration
+  const fps = 1 / interval; // 1 frame every X seconds
+
+  // Each frame will be a separate image, not tiled
+  const cmd = `
 ffmpeg -y -i "${input}" \
--vf "fps=1/2,scale=160:90,tile=5x5" \
+-vf "fps=${fps},scale=160:90" \
 "${outDir}/preview_%03d.jpg"
 `;
 
+  return new Promise((resolve, reject) => {
     exec(cmd, (err, stdout, stderr) => {
       if (err) {
-        console.error(stderr);
+        console.error("FFMPEG SPRITES STDERR:", stderr);
         reject(err);
       } else {
+        console.log(`Generated sprites for video (${duration}s) every ${interval}s`);
         resolve();
       }
     });
   });
+};
 
 /* =========================
    UPLOAD API
@@ -266,7 +272,13 @@ app.post(
       }
 
       const previewSpriteDir = path.join("temp_preview_sprites", videoId);
-      await generatePreviewSprites(video.path, previewSpriteDir);
+      await generatePreviewSprites(video.path, previewSpriteDir, 5);
+
+      const spriteFiles = fs
+        .readdirSync(previewSpriteDir)
+        .filter(f => f.startsWith("preview_") && f.endsWith(".jpg"));
+
+      const spriteCount = spriteFiles.length;
 
       for (const file of fs.readdirSync(previewSpriteDir)) {
         await uploadToSeaweed(
@@ -289,6 +301,7 @@ app.post(
         preview: {
           spriteBaseUrl: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview`,
           frameInterval: 2,
+          spriteCount,
           cols: 5,
           rows: 5,
           frameWidth: 160,
@@ -312,6 +325,17 @@ app.post(
     }
   }
 );
+
+const getVideoDuration = (file) =>
+  new Promise((resolve, reject) => {
+    exec(
+      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${file}"`,
+      (err, stdout, stderr) => {
+        if (err) reject(err);
+        else resolve(parseFloat(stdout));
+      }
+    );
+  });
 
 /* =========================
    READ API
