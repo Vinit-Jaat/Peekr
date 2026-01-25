@@ -53,7 +53,10 @@ const PlayerPage = () => {
           onContextMenu={handleContextMenu} // Disables right-click
           className="relative w-full max-w-6xl aspect-video rounded-2xl overflow-hidden bg-black shadow-[0_0_50px_-12px_rgba(0,0,0,0.5)] border border-zinc-800/50"
         >
-          <HlsPlayer streamUrl={videoData.videoPath} />
+          <HlsPlayer
+            streamUrl={videoData.videoPath}
+            preview={videoData.preview}
+          />
         </div>
 
         {/* Video Info Section */}
