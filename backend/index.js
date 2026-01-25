@@ -1,4 +1,5 @@
 import express from "express";
+import PQueue from "p-queue";
 import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
@@ -22,6 +23,8 @@ import VideoDb from "./mongodbConnectSchema.js";
 
 const app = express();
 mongooseConnect();
+
+const ffmpegQueue = new PQueue({ concurrency: 1 });
 
 const BUCKET_NAME = "hls-videos";
 
@@ -72,11 +75,31 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const ensureDir = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+ensureDir("temp_uploads");
+ensureDir("temp_hls");
+ensureDir("temp_preview_hls");
+ensureDir("temp_preview_sprites");
+
 /* =========================
    MULTER
 ========================= */
 const upload = multer({
-  dest: "temp_uploads/",
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join("temp_uploads", Date.now().toString());
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      cb(null, file.originalname);
+    },
+  }),
   limits: { fileSize: 10 * 1024 * 1024 * 1024 },
 });
 
@@ -228,31 +251,43 @@ app.post(
     { name: "thumbnail", maxCount: 1 },
   ]),
   async (req, res) => {
+    let video;
+    let thumb;
+    let videoId;
+
     try {
-      const video = req.files?.video?.[0];
-      const thumb = req.files?.thumbnail?.[0];
-      if (!video || !thumb) return res.status(400).json({ success: false, message: "Files missing" });
+      video = req.files?.video?.[0];
+      thumb = req.files?.thumbnail?.[0];
 
-      const videoId = new mongoose.Types.ObjectId().toString();
+      if (!video || !thumb) {
+        return res.status(400).json({
+          success: false,
+          message: "Files missing",
+        });
+      }
+
+      videoId = new mongoose.Types.ObjectId().toString();
+
       const hlsDir = path.join("temp_hls", videoId);
+      const previewHlsDir = path.join("temp_preview_hls", videoId);
+      const previewSpriteDir = path.join("temp_preview_sprites", videoId);
 
-      await convertToABRHLS(video.path, hlsDir);
+      //await convertToABRHLS(video.path, hlsDir);
 
-      // Recursively upload all files, skip any hidden temp folders
+      await ffmpegQueue.add(() => convertToABRHLS(video.path, hlsDir));
+
       const walk = (dir) =>
         fs.readdirSync(dir)
-          .filter(f => !f.startsWith(".")) // ignore hidden files like .upload
-          .flatMap(f => {
+          .filter((f) => !f.startsWith("."))
+          .flatMap((f) => {
             const p = path.join(dir, f);
             return fs.statSync(p).isDirectory() ? walk(p) : [p];
           });
 
-      const previewHlsDir = path.join("temp_preview_hls", videoId);
-
       await generatePreviewHLS(video.path, previewHlsDir);
+
       for (const file of walk(previewHlsDir)) {
         const rel = path.relative(previewHlsDir, file).replace(/\\/g, "/");
-
         await uploadToSeaweed(
           file,
           `${videoId}/preview/${rel}`,
@@ -267,20 +302,19 @@ app.post(
         await uploadToSeaweed(
           file,
           `${videoId}/hls/${rel}`,
-          file.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/MP2T"
+          file.endsWith(".m3u8")
+            ? "application/vnd.apple.mpegurl"
+            : "video/MP2T"
         );
       }
 
-      const previewSpriteDir = path.join("temp_preview_sprites", videoId);
       await generatePreviewSprites(video.path, previewSpriteDir, 5);
 
       const spriteFiles = fs
         .readdirSync(previewSpriteDir)
-        .filter(f => f.startsWith("preview_") && f.endsWith(".jpg"));
+        .filter((f) => f.startsWith("preview_") && f.endsWith(".jpg"));
 
-      const spriteCount = spriteFiles.length;
-
-      for (const file of fs.readdirSync(previewSpriteDir)) {
+      for (const file of spriteFiles) {
         await uploadToSeaweed(
           path.join(previewSpriteDir, file),
           `${videoId}/preview/${file}`,
@@ -289,7 +323,12 @@ app.post(
       }
 
       const ext = path.extname(thumb.originalname);
-      await uploadToSeaweed(thumb.path, `${videoId}/thumbnail${ext}`, thumb.mimetype);
+
+      await uploadToSeaweed(
+        thumb.path,
+        `${videoId}/thumbnail${ext}`,
+        thumb.mimetype
+      );
 
       const doc = await VideoDb.create({
         _id: videoId,
@@ -301,12 +340,12 @@ app.post(
         preview: {
           spriteBaseUrl: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview`,
           frameInterval: 2,
-          spriteCount,
+          spriteCount: spriteFiles.length,
           cols: 5,
           rows: 5,
           frameWidth: 160,
-          frameHeight: 90
-        }
+          frameHeight: 90,
+        },
       });
 
       res.json({ success: true, data: doc });
@@ -315,13 +354,37 @@ app.post(
       res.status(500).json({
         success: false,
         message: "Upload failed",
-        error: err.message
+        error: err.message,
       });
     } finally {
-      fs.rmSync("temp_hls", { recursive: true, force: true });
-      fs.rmSync("temp_uploads", { recursive: true, force: true });
-      fs.rmSync("temp_preview_hls", { recursive: true, force: true });
-      fs.rmSync("temp_preview_sprites", { recursive: true, force: true });
+      try {
+        if (video?.path && fs.existsSync(video.path)) {
+          fs.unlinkSync(video.path);
+        }
+
+        if (thumb?.path && fs.existsSync(thumb.path)) {
+          fs.unlinkSync(thumb.path);
+        }
+
+        if (videoId) {
+          fs.rmSync(path.join("temp_hls", videoId), {
+            recursive: true,
+            force: true,
+          });
+
+          fs.rmSync(path.join("temp_preview_hls", videoId), {
+            recursive: true,
+            force: true,
+          });
+
+          fs.rmSync(path.join("temp_preview_sprites", videoId), {
+            recursive: true,
+            force: true,
+          });
+        }
+      } catch (cleanupErr) {
+        console.warn("Cleanup warning:", cleanupErr.message);
+      }
     }
   }
 );
