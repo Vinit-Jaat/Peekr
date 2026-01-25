@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Play, Clock, Eye } from "lucide-react";
 import MovieCard from "../components/MovieCard";
+import PreviewVideo from "../components/PreviewVideo";
 
 const Home = () => {
   const navigate = useNavigate();
@@ -12,9 +13,25 @@ const Home = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
-  const LIMIT = 5;
+  // Fixed: Track specific video ID instead of a boolean
+  const [hoveredId, setHoveredId] = useState(null);
 
+  const LIMIT = 5;
   const BASE_URL = "http://localhost:3000";
+
+  const hoverTimeout = useRef(null);
+
+  const onEnter = (id) => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    hoverTimeout.current = setTimeout(() => {
+      setHoveredId(id);
+    }, 500);
+  };
+
+  const onLeave = () => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    setHoveredId(null);
+  };
 
   const fetchVideos = async (query = "", pageNumber = 1) => {
     setLoading(true);
@@ -102,20 +119,41 @@ const Home = () => {
                 className="group cursor-pointer"
                 onClick={() => navigate(`/watch/${video._id}`)}
               >
-                {/* Custom Card Wrapper to make it look premium */}
-                <div className="relative aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 transition-transform duration-300 group-hover:-translate-y-2 shadow-xl">
-                  <img
-                    src={video.thumbnailPath}
-                    alt={video.title}
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
+                {/* Custom Card Wrapper */}
+                <div
+                  className="relative aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 transition-transform duration-300 group-hover:-translate-y-2 shadow-xl"
+                  onMouseEnter={() => onEnter(video._id)}
+                  onMouseLeave={onLeave}
+                >
+                  {/* Thumbnail: Show when not hovered or when this specific card isn't active */}
+                  {hoveredId !== video._id && (
+                    <img
+                      src={video.thumbnailPath}
+                      alt={video.title}
+                      className="w-full h-full object-cover"
+                    />
+                  )}
+
+                  {/* Preview: Show only for the specifically hovered card */}
+                  {hoveredId === video._id && video.previewPath && (
+                    <PreviewVideo
+                      src={video.previewPath}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  )}
+
                   {/* Overlay on hover */}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <div className="bg-white p-3 rounded-full text-black">
                       <Play fill="black" size={24} />
                     </div>
                   </div>
-                  {/* Duration Badge (if exists) */}
+
+                  {/* Duration Badge */}
                   {video.duration && (
                     <div className="absolute bottom-3 right-3 bg-black/80 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded">
                       {Math.floor(video.duration / 60)}:{(video.duration % 60).toString().padStart(2, '0')}
