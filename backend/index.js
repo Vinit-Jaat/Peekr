@@ -190,6 +190,27 @@ ffmpeg -y -i "${input}" \
     });
   });
 
+
+const generatePreviewSprites = (input, outDir) =>
+  new Promise((resolve, reject) => {
+    fs.mkdirSync(outDir, { recursive: true });
+
+    const cmd = `
+ffmpeg -y -i "${input}" \
+-vf "fps=1/2,scale=160:90,tile=5x5" \
+"${outDir}/preview_%03d.jpg"
+`;
+
+    exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        console.error(stderr);
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+
 /* =========================
    UPLOAD API
 ========================= */
@@ -219,11 +240,11 @@ app.post(
             return fs.statSync(p).isDirectory() ? walk(p) : [p];
           });
 
-      const previewDir = path.join("temp_preview", videoId);
+      const previewHlsDir = path.join("temp_preview_hls", videoId);
 
-      await generatePreviewHLS(video.path, previewDir);
-      for (const file of walk(previewDir)) {
-        const rel = path.relative(previewDir, file).replace(/\\/g, "/");
+      await generatePreviewHLS(video.path, previewHlsDir);
+      for (const file of walk(previewHlsDir)) {
+        const rel = path.relative(previewHlsDir, file).replace(/\\/g, "/");
 
         await uploadToSeaweed(
           file,
@@ -234,13 +255,23 @@ app.post(
         );
       }
 
-
       for (const file of walk(hlsDir)) {
         const rel = path.relative(hlsDir, file).replace(/\\/g, "/");
         await uploadToSeaweed(
           file,
           `${videoId}/hls/${rel}`,
           file.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/MP2T"
+        );
+      }
+
+      const previewSpriteDir = path.join("temp_preview_sprites", videoId);
+      await generatePreviewSprites(video.path, previewSpriteDir);
+
+      for (const file of fs.readdirSync(previewSpriteDir)) {
+        await uploadToSeaweed(
+          path.join(previewSpriteDir, file),
+          `${videoId}/preview/${file}`,
+          "image/jpeg"
         );
       }
 
@@ -254,6 +285,14 @@ app.post(
         previewPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview/index.m3u8`,
         videoPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/hls/master.m3u8`,
         thumbnailPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/thumbnail${ext}`,
+        preview: {
+          spriteBaseUrl: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview`,
+          frameInterval: 2,
+          cols: 5,
+          rows: 5,
+          frameWidth: 160,
+          frameHeight: 90
+        }
       });
 
       res.json({ success: true, data: doc });
@@ -263,8 +302,8 @@ app.post(
     } finally {
       fs.rmSync("temp_hls", { recursive: true, force: true });
       fs.rmSync("temp_uploads", { recursive: true, force: true });
-
-      fs.rmSync("temp_preview", { recursive: true, force: true });
+      fs.rmSync("temp_preview_hls", { recursive: true, force: true });
+      fs.rmSync("temp_preview_sprites", { recursive: true, force: true });
     }
   }
 );
