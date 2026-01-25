@@ -50,7 +50,25 @@ ensureBucketExists();
 /* =========================
    MIDDLEWARE
 ========================= */
-app.use(cors({ origin: "http://localhost:5173" }));
+//app.use(cors({ origin: "http://localhost:5173" }));
+app.use(cors({
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Range",
+    "Accept",
+    "X-Requested-With"
+  ],
+  exposedHeaders: [
+    "Content-Range",
+    "X-Chunk-Index",
+    "Content-Length",
+    "Accept-Ranges"
+  ],
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -148,6 +166,30 @@ ffmpeg -y -i "${input}" \
     });
   });
 
+const generatePreviewHLS = (input, outDir) =>
+  new Promise((resolve, reject) => {
+    fs.mkdirSync(outDir, { recursive: true });
+
+    const cmd = `
+ffmpeg -y -i "${input}" \
+-t 7 \
+-an \
+-vf scale=426:240 \
+-c:v h264_nvenc \
+-b:v 300k \
+-f hls \
+-hls_time 2 \
+-hls_list_size 0 \
+-hls_segment_filename "${outDir}/segment_%03d.ts" \
+"${outDir}/index.m3u8"
+`;
+
+    exec(cmd, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
 /* =========================
    UPLOAD API
 ========================= */
@@ -177,12 +219,28 @@ app.post(
             return fs.statSync(p).isDirectory() ? walk(p) : [p];
           });
 
+      const previewDir = path.join("temp_preview", videoId);
+
+      await generatePreviewHLS(video.path, previewDir);
+      for (const file of walk(previewDir)) {
+        const rel = path.relative(previewDir, file).replace(/\\/g, "/");
+
+        await uploadToSeaweed(
+          file,
+          `${videoId}/preview/${rel}`,
+          file.endsWith(".m3u8")
+            ? "application/vnd.apple.mpegurl"
+            : "video/MP2T"
+        );
+      }
+
+
       for (const file of walk(hlsDir)) {
         const rel = path.relative(hlsDir, file).replace(/\\/g, "/");
         await uploadToSeaweed(
           file,
           `${videoId}/hls/${rel}`,
-          file.endsWith(".m3u8") ? "application/x-mpegURL" : "video/MP2T"
+          file.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/MP2T"
         );
       }
 
@@ -193,6 +251,7 @@ app.post(
         _id: videoId,
         title: req.body.title,
         description: req.body.description,
+        previewPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview/index.m3u8`,
         videoPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/hls/master.m3u8`,
         thumbnailPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/thumbnail${ext}`,
       });
@@ -204,6 +263,8 @@ app.post(
     } finally {
       fs.rmSync("temp_hls", { recursive: true, force: true });
       fs.rmSync("temp_uploads", { recursive: true, force: true });
+
+      fs.rmSync("temp_preview", { recursive: true, force: true });
     }
   }
 );
