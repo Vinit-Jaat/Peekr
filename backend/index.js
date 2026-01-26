@@ -43,7 +43,11 @@ const uploadLimiter = rateLimit({
 const app = express();
 mongooseConnect();
 
-const ffmpegQueue = new PQueue({ concurrency: 1 });
+const ffmpegQueue = new PQueue({
+  concurrency: 1,
+  intervalCap: 3,
+  interval: 60 * 60 * 1000
+});
 
 const BUCKET_NAME = "hls-videos";
 
