@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -8,7 +9,29 @@ var mongoClient = new MongoClient("mongodb://localhost:27017");
 var database = mongoClient.GetDatabase("CloudFairVideoStreaming");
 var videosCollection = database.GetCollection<Video>("videodbs");
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ip,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(15),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 50,
+            }
+        );
+    });
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
 var app = builder.Build();
+app.UseRateLimiter();
+
 app.UseExceptionHandler("/error");
 
 app.MapGet("/", () => "Home Page!");
