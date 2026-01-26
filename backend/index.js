@@ -7,6 +7,7 @@ import cors from "cors";
 import multer from "multer";
 import mongoose from "mongoose";
 import axios from "axios"; // Add this at the top with other importsimport axios from "axios"; // Add this at the top with other imports
+import rateLimit from "express-rate-limit";
 
 import {
   S3Client,
@@ -20,6 +21,24 @@ import { Upload } from "@aws-sdk/lib-storage";
 
 import mongooseConnect from "./mongodbConnect.js";
 import VideoDb from "./mongodbConnectSchema.js";
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300,                // 300 requests per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,                  // 3 uploads per IP per hour
+  message: {
+    success: false,
+    message: "Upload rate limit exceeded. Try again later."
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const app = express();
 mongooseConnect();
@@ -49,6 +68,8 @@ async function ensureBucketExists() {
   }
 }
 ensureBucketExists();
+
+app.use(globalLimiter);
 
 /* =========================
    MIDDLEWARE
@@ -246,6 +267,7 @@ ffmpeg -y -i "${input}" \
 ========================= */
 app.post(
   "/upload",
+  uploadLimiter,
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
