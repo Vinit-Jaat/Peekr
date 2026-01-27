@@ -29,6 +29,28 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy(
+        "search",
+        context =>
+        {
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            return RateLimitPartition.GetFixedWindowLimiter(
+                ip,
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 30,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 10,
+                }
+            );
+        }
+    );
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
 var app = builder.Build();
 app.UseRateLimiter();
 
@@ -89,24 +111,25 @@ app.MapGet(
 );
 
 app.MapGet(
-    "/search",
-    async (string? q) =>
-    {
-        if (string.IsNullOrWhiteSpace(q))
-            return Results.BadRequest("Search Query is required");
+        "/search",
+        async (string? q) =>
+        {
+            if (string.IsNullOrWhiteSpace(q))
+                return Results.BadRequest("Search Query is required");
 
-        var filter = Builders<Video>.Filter.Or(
-            Builders<Video>.Filter.Regex(v => v.Title, new BsonRegularExpression(q, "i")),
-            Builders<Video>.Filter.Regex(v => v.Description, new BsonRegularExpression(q, "i"))
-        );
+            var filter = Builders<Video>.Filter.Or(
+                Builders<Video>.Filter.Regex(v => v.Title, new BsonRegularExpression(q, "i")),
+                Builders<Video>.Filter.Regex(v => v.Description, new BsonRegularExpression(q, "i"))
+            );
 
-        var videos = await videosCollection
-            .Find(filter)
-            .SortByDescending(v => v.CreatedAt)
-            .ToListAsync();
+            var videos = await videosCollection
+                .Find(filter)
+                .SortByDescending(v => v.CreatedAt)
+                .ToListAsync();
 
-        return Results.Ok(new { success = true, data = videos });
-    }
-);
+            return Results.Ok(new { success = true, data = videos });
+        }
+    )
+    .RequireRateLimiting("search");
 
 app.Run();
