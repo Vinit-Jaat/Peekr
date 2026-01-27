@@ -118,6 +118,8 @@ app.MapGet(
     "/videos/{id}",
     async (string id, IMongoCollection<Video> collection) =>
     {
+        if (id.Length != 24)
+            return Results.BadRequest("Invalid ID fromat.");
         try
         {
             var video = await collection.Find(v => v.Id == id).FirstOrDefaultAsync();
