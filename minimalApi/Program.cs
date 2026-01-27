@@ -4,10 +4,19 @@ using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var mongoSettings = builder.Configuration.GetSection("MongoDB");
+
 // MongoDB connection
-var mongoClient = new MongoClient("mongodb://localhost:27017");
-var database = mongoClient.GetDatabase("CloudFairVideoStreaming");
-var videosCollection = database.GetCollection<Video>("videodbs");
+builder.Services.AddSingleton<IMongoClient>(new MongoClient(mongoSettings["ConnectionString"]));
+builder.Services.AddScoped(sp =>
+    sp.GetRequiredService<IMongoClient>()
+        .GetDatabase(mongoSettings["DatabaseName"])
+        .GetCollection<Video>("videodbs")
+);
+
+//var mongoClient = new MongoClient("mongodb://localhost:27017");
+//var database = mongoClient.GetDatabase("CloudFairVideoStreaming");
+//var videosCollection = database.GetCollection<Video>("videodbs");
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -86,11 +95,11 @@ app.MapGet(
 
 app.MapGet(
         "/videos",
-        async () =>
+        async (IMongoCollection<Video> collection) =>
         {
             try
             {
-                var videos = await videosCollection.Find(_ => true).ToListAsync();
+                var videos = await collection.Find(_ => true).ToListAsync();
                 return Results.Ok(videos);
             }
             catch (MongoException ex)
@@ -107,11 +116,11 @@ app.MapGet(
 
 app.MapGet(
     "/videos/{id}",
-    async (string id) =>
+    async (string id, IMongoCollection<Video> collection) =>
     {
         try
         {
-            var video = await videosCollection.Find(v => v.Id == id).FirstOrDefaultAsync();
+            var video = await collection.Find(v => v.Id == id).FirstOrDefaultAsync();
             return video is null ? Results.NotFound() : Results.Ok(video);
         }
         catch (MongoException ex)
@@ -127,7 +136,7 @@ app.MapGet(
 
 app.MapGet(
         "/search",
-        async (string? q) =>
+        async (string? q, IMongoCollection<Video> collection) =>
         {
             if (string.IsNullOrWhiteSpace(q))
                 return Results.BadRequest("Search Query is required");
@@ -137,7 +146,7 @@ app.MapGet(
                 Builders<Video>.Filter.Regex(v => v.Description, new BsonRegularExpression(q, "i"))
             );
 
-            var videos = await videosCollection
+            var videos = await collection
                 .Find(filter)
                 .SortByDescending(v => v.CreatedAt)
                 .ToListAsync();
