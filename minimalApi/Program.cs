@@ -1,4 +1,5 @@
 using System.Threading.RateLimiting;
+using minimalApi;
 using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -99,7 +100,26 @@ app.MapGet(
             try
             {
                 var videos = await collection.Find(_ => true).ToListAsync();
-                return Results.Ok(videos);
+
+                var videosDto = videos.Select(v => new VideosDto(
+                    v.Id,
+                    v.Title,
+                    v.Description,
+                    v.preview != null
+                        ? new VideosPreviewDto(
+                            v.preview.SpriteBaseUrl ?? "",
+                            v.preview.frameInterval,
+                            v.preview.spriteCount,
+                            v.preview.cols,
+                            v.preview.rows,
+                            v.preview.frameWidth,
+                            v.preview.frameHeight
+                        )
+                        : null,
+                    v.UpdatedAt,
+                    v.CreatedAt
+                ));
+                return Results.Ok(videosDto);
             }
             catch (MongoException ex)
             {
