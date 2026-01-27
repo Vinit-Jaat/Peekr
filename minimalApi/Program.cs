@@ -26,13 +26,27 @@ builder.Services.AddRateLimiter(options =>
             }
         );
     });
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-});
 
-builder.Services.AddRateLimiter(options =>
-{
     options.AddPolicy(
         "search",
+        context =>
+        {
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            return RateLimitPartition.GetFixedWindowLimiter(
+                ip,
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 30,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 10,
+                }
+            );
+        }
+    );
+
+    options.AddPolicy(
+        "videos",
         context =>
         {
             var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -71,24 +85,25 @@ app.MapGet(
 );
 
 app.MapGet(
-    "/videos",
-    async () =>
-    {
-        try
+        "/videos",
+        async () =>
         {
-            var videos = await videosCollection.Find(_ => true).ToListAsync();
-            return Results.Ok(videos);
+            try
+            {
+                var videos = await videosCollection.Find(_ => true).ToListAsync();
+                return Results.Ok(videos);
+            }
+            catch (MongoException ex)
+            {
+                return Results.Problem(
+                    title: "Database error",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError
+                );
+            }
         }
-        catch (MongoException ex)
-        {
-            return Results.Problem(
-                title: "Database error",
-                detail: ex.Message,
-                statusCode: StatusCodes.Status500InternalServerError
-            );
-        }
-    }
-);
+    )
+    .RequireRateLimiting("videos");
 
 app.MapGet(
     "/videos/{id}",
