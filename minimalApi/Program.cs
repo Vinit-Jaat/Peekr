@@ -1,5 +1,4 @@
 using System.Threading.RateLimiting;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -143,10 +142,7 @@ app.MapGet(
             if (string.IsNullOrWhiteSpace(q))
                 return Results.BadRequest("Search Query is required");
 
-            var filter = Builders<Video>.Filter.Or(
-                Builders<Video>.Filter.Regex(v => v.Title, new BsonRegularExpression(q, "i")),
-                Builders<Video>.Filter.Regex(v => v.Description, new BsonRegularExpression(q, "i"))
-            );
+            var filter = Builders<Video>.Filter.Text(q);
 
             var videos = await collection
                 .Find(filter)
