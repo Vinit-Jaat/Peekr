@@ -1,5 +1,8 @@
+using System.Collections.ObjectModel;
 using System.Threading.RateLimiting;
+using FluentValidation;
 using minimalApi;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,12 +14,16 @@ builder.Services.AddSingleton<IMongoClient>(new MongoClient(mongoSettings["Conne
 builder.Services.AddScoped(sp =>
     sp.GetRequiredService<IMongoClient>()
         .GetDatabase(mongoSettings["DatabaseName"])
-        .GetCollection<Video>("videodbs")
+        .GetCollection<Video>("CSharpVideosCollection")
 );
 
 //var mongoClient = new MongoClient("mongodb://localhost:27017");
 //var database = mongoClient.GetDatabase("CloudFairVideoStreaming");
 //var videosCollection = database.GetCollection<Video>("videodbs");
+
+//builder.Services.AddValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<VideoValidator>();
+
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -173,5 +180,66 @@ app.MapGet(
         }
     )
     .RequireRateLimiting("search");
+
+app.MapPost(
+    "/videos",
+    async (Video newVideo, 
+        IValidator<Video> validator, IMongoCollection<Video> collection) =>
+    {
+        newVideo.Id = null!;
+        newVideo.CreatedAt = DateTime.UtcNow;
+        newVideo.UpdatedAt = DateTime.UtcNow;
+
+        try
+        {
+            await collection.InsertOneAsync(newVideo);
+            return Results.Created($"/videos/{newVideo.Id}", newVideo);
+        }
+        catch (MongoException ex)
+        {
+            return Results.Problem("Failed to insert Video" + ex.Message);
+        }
+    }
+);
+
+app.MapDelete("/videos/{id}", async (string id, IMongoCollection<Video> collection) =>
+{   
+    if(!ObjectId.TryParse(id, out _))
+    {
+        return Results.BadRequest("Invalid ID format. Must be a 24 character - hex string.");
+    }
+    try
+    {
+        var result = await collection.DeleteOneAsync(v => v.Id == id); 
+
+        if(result.DeletedCount == 0)
+        {
+            return Results.NotFound($"No Vidoe found with ID : {id}");
+        }
+
+        return Results.NoContent(); 
+    }catch(MongoException ex)
+    {
+        return Results.Problem(detail: ex.Message, title: "Database error during deletion");
+    }
+}).RequireRateLimiting("videos");
+
+app.MapPut("/videos/{id}", async (string id, Video updateVideo, 
+        IValidator<Video> validator, IMongoCollection<Video> collection) =>
+{
+    if (id.Length != 24)
+        return Results.BadRequest("Invalid ID format.");
+
+    updateVideo.Id = id;
+    updateVideo.UpdatedAt = DateTime.UtcNow;
+
+    var result = await collection.ReplaceOneAsync(v => v.Id == id, updateVideo);
+
+    if (result.MatchedCount == 0)
+        return Results.NotFound();
+
+    return Results.Ok(updateVideo);
+});
+
 
 app.Run();
