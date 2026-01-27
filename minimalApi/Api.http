@@ -1,0 +1,45 @@
+POST http://localhost:5248/videos
+Content-Type: application/json
+
+{
+    "title": "C# Advanced Tutorial 3",
+    "description": "Learning MongoDB with Minimal APIs", 
+    "thumbnailPath": "images/thumb1.jpg", 
+    "videoPath": "videos/lesson1.mp4", 
+    "previewPath": "previews/p1.png", 
+    "preview": {
+        "spriteBaseUrl": "none", 
+        "frameInterval": 1, 
+        "spriteCount": -1, 
+        "cols": 1, 
+        "rows": 1, 
+        "frameWidth": 1, 
+        "frameHeight": 1
+    }
+}
+
+###
+DELETE http://localhost:5248/videos/6978fa8df832c16fb47c4c58
+Content-Type: application/json
+
+###
+
+PUT http://localhost:5248/videos/697900ede27247898bc3adb4
+Content-Type: application/json
+
+{
+    "title": "C# Advanced Tutorial 2",
+    "description": "Learning MongoDB with Minimal APIs 2", 
+    "thumbnailPath": "images/thumb1.jpg", 
+    "videoPath": "videos/lesson1.mp4", 
+    "previewPath": "previews/p1.png", 
+    "preview": {
+        "spriteBaseUrl": "none", 
+        "frameInterval": 1, 
+        "spriteCount": 1, 
+        "cols": 1, 
+        "rows": 1, 
+        "frameWidth": 1, 
+        "frameHeight": 1
+    }
+}
