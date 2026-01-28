@@ -6,8 +6,9 @@ import { exec } from "child_process";
 import cors from "cors";
 import multer from "multer";
 import mongoose from "mongoose";
-import axios from "axios"; // Add this at the top with other importsimport axios from "axios"; // Add this at the top with other imports
+import axios from "axios";
 import rateLimit from "express-rate-limit";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 
 import {
   S3Client,
@@ -23,19 +24,35 @@ import mongooseConnect from "./mongodbConnect.js";
 import VideoDb from "./mongodbConnectSchema.js";
 
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,                // 300 requests per IP
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
+  skipFailedRequests: false,
 });
 
 const uploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3,                  // 3 uploads per IP per hour
+  windowMs: 60 * 60 * 1000,
+  max: 3,
   message: {
     success: false,
     message: "Upload rate limit exceeded. Try again later."
   },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const searchLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 1000,
+  message: { success: false, message: "Too many searches. Please wait." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const readLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -78,7 +95,6 @@ app.use(globalLimiter);
 /* =========================
    MIDDLEWARE
 ========================= */
-//app.use(cors({ origin: "http://localhost:5173" }));
 app.use(cors({
   origin: "http://localhost:5173",
   methods: ["GET", "POST", "DELETE", "OPTIONS"],
@@ -360,11 +376,11 @@ app.post(
         _id: videoId,
         title: req.body.title,
         description: req.body.description,
-        previewPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview/index.m3u8`,
-        videoPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/hls/master.m3u8`,
-        thumbnailPath: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/thumbnail${ext}`,
+        previewPath: `http://localhost:3000/stream-video/${videoId}/preview/index.m3u8`,
+        videoPath: `http://localhost:3000/stream-video/${videoId}/hls/master.m3u8`,
+        thumbnailPath: `http://localhost:3000/stream-video/${videoId}/thumbnail${ext}`,
         preview: {
-          spriteBaseUrl: `http://localhost:8888/buckets/${BUCKET_NAME}/${videoId}/preview`,
+          spriteBaseUrl: `http://localhost:3000/stream-video/${videoId}/preview`,
           frameInterval: 2,
           spriteCount: spriteFiles.length,
           cols: 5,
@@ -429,7 +445,7 @@ const getVideoDuration = (file) =>
 /* =========================
    READ API
 ========================= */
-app.get("/videos", async (req, res) => {
+app.get("/videos", readLimiter, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 12;
@@ -470,8 +486,6 @@ app.get("/videos/:id", async (req, res) => {
 const deleteFromSeaweed = async (videoId) => {
   if (!videoId) return;
 
-  // SeaweedFS usually maps S3 buckets to /buckets/BUCKET_NAME/ in the Filer
-  // Try both paths if you aren't sure, but this is the standard internal mapping:
   const filerUrl = `http://127.0.0.1:8888/buckets/${BUCKET_NAME}/${videoId}/?recursive=true`;
 
   try {
@@ -506,7 +520,7 @@ app.delete("/videos/:id", async (req, res) => {
   }
 });
 
-app.get("/search", async (req, res) => {
+app.get("/search", searchLimiter, async (req, res) => {
   const { q = "", page = 1, limit = 12 } = req.query;
 
   const skip = (page - 1) * limit;
@@ -533,6 +547,49 @@ app.get("/search", async (req, res) => {
       totalPages: Math.ceil(total / limit)
     }
   });
+});
+
+app.get(/^\/stream-video\/(.+)/, async (req, res) => {
+  const key = req.params[0]; // full path after /stream-video/
+
+  try {
+    const command = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    });
+
+    const response = await s3Client.send(command);
+
+    // Set Content-Type based on file type
+    if (key.endsWith(".m3u8")) {
+      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    } else if (key.endsWith(".ts")) {
+      res.setHeader("Content-Type", "video/mp2t");
+    } else if (key.endsWith(".jpg") || key.endsWith(".jpeg")) {
+      res.setHeader("Content-Type", "image/jpeg");
+    } else {
+      res.setHeader("Content-Type", "application/octet-stream");
+    }
+
+    // Enable CORS & range requests for HLS streaming
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Accept-Ranges", "bytes");
+
+    // Optional logging for debug
+    console.log("🎥 Node streaming:", key,
+      key.endsWith(".m3u8") ? "[playlist]" :
+        key.endsWith(".ts") ? "[segment]" :
+          key.endsWith(".jpg") ? "[sprite]" :
+            "[other]"
+    );
+
+    // Pipe the S3 object to the response
+    response.Body.pipe(res);
+
+  } catch (err) {
+    console.error("Stream error:", err.message, "Key:", key);
+    res.sendStatus(404);
+  }
 });
 
 /* =========================
