@@ -17,4 +17,9 @@ export default defineConfig({
     host: true,
     allowedHosts: "all",
   },
+  server: {
+    proxy: {
+      "/buckets": "http://localhost:3000"
+    },
+  },
 });
