@@ -1,5 +1,6 @@
-using System.Collections.ObjectModel;
+//using System.Collections.ObjectModel;
 using System.Threading.RateLimiting;
+using Amazon.S3;
 using FluentValidation;
 using minimalApi;
 using MongoDB.Bson;
@@ -8,22 +9,34 @@ using MongoDB.Driver;
 var builder = WebApplication.CreateBuilder(args);
 
 var mongoSettings = builder.Configuration.GetSection("MongoDB");
+var seaweedSettings = builder.Configuration.GetSection("SeaweedFS");
 
 // MongoDB connection
-builder.Services.AddSingleton<IMongoClient>(new MongoClient(mongoSettings["ConnectionString"]));
-builder.Services.AddScoped(sp =>
+var mongoClient = new MongoClient(mongoSettings["ConnectionString"]);
+
+builder.Services.AddSingleton<IMongoClient>(mongoClient);
+
+builder.Services.AddSingleton<IMongoCollection<Video>>(sp =>
     sp.GetRequiredService<IMongoClient>()
         .GetDatabase(mongoSettings["DatabaseName"])
         .GetCollection<Video>("CSharpVideosCollection")
 );
 
-//var mongoClient = new MongoClient("mongodb://localhost:27017");
-//var database = mongoClient.GetDatabase("CloudFairVideoStreaming");
-//var videosCollection = database.GetCollection<Video>("videodbs");
+// SeaweedFS (S3)
+var s3Config = new AmazonS3Config
+{
+    ServiceURL = seaweedSettings["ServiceUrl"] ?? "http://localhost:8333",
+    ForcePathStyle = true,
+};
+
+builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client(
+    seaweedSettings["AccessKey"],
+    seaweedSettings["SecretKey"],
+    s3Config
+));
 
 //builder.Services.AddValidation();
 builder.Services.AddValidatorsFromAssemblyContaining<VideoValidator>();
-
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -82,6 +95,28 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+try
+{
+    // MongoDB check
+    mongoClient.ListDatabaseNames().ToList();
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.WriteLine("✅ Connected to MongoDB successfully.");
+
+    // SeaweedFS check
+    var s3Client = app.Services.GetRequiredService<IAmazonS3>();
+    await s3Client.ListBucketsAsync();
+    Console.WriteLine("✅ Connected to SeaweedFS (S3 API) successfully.");
+
+    Console.ResetColor();
+}
+catch (Exception ex)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"❌ Connection Error: {ex.Message}");
+    Console.ResetColor();
+}
+
 app.UseRateLimiter();
 
 app.UseExceptionHandler("/error");
@@ -183,8 +218,7 @@ app.MapGet(
 
 app.MapPost(
     "/videos",
-    async (Video newVideo, 
-        IValidator<Video> validator, IMongoCollection<Video> collection) =>
+    async (Video newVideo, IValidator<Video> validator, IMongoCollection<Video> collection) =>
     {
         newVideo.Id = null!;
         newVideo.CreatedAt = DateTime.UtcNow;
@@ -202,43 +236,57 @@ app.MapPost(
     }
 );
 
-app.MapDelete("/videos/{id}", async (string id, IMongoCollection<Video> collection) =>
-{   
-    if(!ObjectId.TryParse(id, out _))
-    {
-        return Results.BadRequest("Invalid ID format. Must be a 24 character - hex string.");
-    }
-    try
-    {
-        var result = await collection.DeleteOneAsync(v => v.Id == id); 
-
-        if(result.DeletedCount == 0)
+app.MapDelete(
+        "/videos/{id}",
+        async (string id, IMongoCollection<Video> collection) =>
         {
-            return Results.NotFound($"No Vidoe found with ID : {id}");
+            if (!ObjectId.TryParse(id, out _))
+            {
+                return Results.BadRequest(
+                    "Invalid ID format. Must be a 24 character - hex string."
+                );
+            }
+            try
+            {
+                var result = await collection.DeleteOneAsync(v => v.Id == id);
+
+                if (result.DeletedCount == 0)
+                {
+                    return Results.NotFound($"No Vidoe found with ID : {id}");
+                }
+
+                return Results.NoContent();
+            }
+            catch (MongoException ex)
+            {
+                return Results.Problem(detail: ex.Message, title: "Database error during deletion");
+            }
         }
+    )
+    .RequireRateLimiting("videos");
 
-        return Results.NoContent(); 
-    }catch(MongoException ex)
+app.MapPut(
+    "/videos/{id}",
+    async (
+        string id,
+        Video updateVideo,
+        IValidator<Video> validator,
+        IMongoCollection<Video> collection
+    ) =>
     {
-        return Results.Problem(detail: ex.Message, title: "Database error during deletion");
+        if (id.Length != 24)
+            return Results.BadRequest("Invalid ID format.");
+
+        updateVideo.Id = id;
+        updateVideo.UpdatedAt = DateTime.UtcNow;
+
+        var result = await collection.ReplaceOneAsync(v => v.Id == id, updateVideo);
+
+        if (result.MatchedCount == 0)
+            return Results.NotFound();
+
+        return Results.Ok(updateVideo);
     }
-}).RequireRateLimiting("videos");
-
-app.MapPut("/videos/{id}", async (string id, Video updateVideo, 
-        IValidator<Video> validator, IMongoCollection<Video> collection) =>
-{
-    if (id.Length != 24)
-        return Results.BadRequest("Invalid ID format.");
-
-    updateVideo.Id = id;
-    updateVideo.UpdatedAt = DateTime.UtcNow;
-
-    var result = await collection.ReplaceOneAsync(v => v.Id == id, updateVideo);
-
-    if (result.MatchedCount == 0)
-        return Results.NotFound();
-
-    return Results.Ok(updateVideo);
-});
+);
 
 app.Run();
