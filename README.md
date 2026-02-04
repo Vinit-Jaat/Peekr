@@ -125,6 +125,7 @@ This project supports:
 No vendor lock-in. Full control over data and infrastructure.
 
 ---
+
 ## 🖼️ Application Screenshots
 
 ### 🏠 Home Page
@@ -148,6 +149,12 @@ No vendor lock-in. Full control over data and infrastructure.
 ### 🎬 Video Playing
 
 ![Video Playing](./frontend/screenshots/player.png)
+
+---
+
+### 🎬 Video Playing
+
+![Video Playing](./frontend/screenshots/preview.png)
 
 ---
 
